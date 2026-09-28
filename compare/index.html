@@ -1,0 +1,38 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Delicate A/B</title>
+<style>
+  :root { --bg: #14151a; --panel: #1d1f27; --fg: #e6e6ea; --dim: #8a8d99; --grid: #2b2e3a; }
+  body { margin: 0; padding: 24px 16px; background: var(--bg); color: var(--fg); font: 14px/1.5 ui-monospace, "SF Mono", Menlo, monospace; }
+  main { max-width: 720px; margin: 0 auto; }
+  h1 { font-size: 18px; margin: 0 0 16px; }
+  .panel { background: var(--panel); border: 1px solid var(--grid); border-radius: 8px; padding: 16px; margin-bottom: 16px; }
+  .panel h2 { font-size: 14px; margin: 0 0 8px; }
+  .panel p { color: var(--dim); margin: 0 0 8px; }
+  audio { width: 100%; }
+</style>
+</head>
+<body>
+<main>
+  <h1>"delicate 0ooz!" (emax/TRSI, 1994): references vs. the emulated ProTracker 2.3A routine</h1>
+  <div class="panel">
+    <h2>A · original, rendered by libopenmpt</h2>
+    <p>Speed 4, 17 samples, volume commands, vibrato, tone portamento, volume slides.</p>
+    <audio controls preload="metadata" src="delicate-protracker.wav"></audio>
+  </div>
+  <div class="panel">
+    <h2>E · reference: UADE 3.05 (real Amiga replayer on UAE's Paula emulation), filter off</h2>
+    <p>Against this, the emulated PT2.3A render aligns within 0.3 ms, matches in level, and correlates 0.94 to 0.99 at waveform level once note starts are aligned to within one raster line.</p>
+    <audio controls preload="metadata" src="delicate-uade.wav"></audio>
+  </div>
+  <div class="panel">
+    <h2>D · original module, ProTracker 2.3A playroutine running in the emulator</h2>
+    <p>Peter "Crayon" Hanning's PT-CIAPlay.s assembled unmodified, driven by the emulated CIA-B timer A at 50 Hz. 10 ms loudness envelope correlates 0.96 with the libopenmpt render.</p>
+    <audio controls preload="metadata" src="delicate-pt23a.wav"></audio>
+  </div>
+</main>
+</body>
+</html>

@@ -1,0 +1,4 @@
+.idea/
+emu/native/ust-native
+*.wav
+compare/*.mod
