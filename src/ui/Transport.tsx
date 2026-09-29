@@ -57,6 +57,8 @@ export const Transport = ({lifecycle, player, initialModule}: Construct) => {
                     <span>{speed}</span>
                     <span>{timer}</span>
                 </span>
+                <a className="repo" href="https://github.com/andremichelle/ProTracker" target="_blank"
+                   rel="noopener" title="Source on GitHub">GitHub</a>
             </div>
             <div className="error">{error}</div>
         </div>
