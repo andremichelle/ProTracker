@@ -1,10 +1,14 @@
-# ProTracker 2.3A playroutine in WebAssembly
+# ProTracker
+
+**Live:** <https://andremichelle.github.io/ProTracker/>
 
 Peter "Crayon" Hanning's original ProTracker 2.3A CIA playroutine, running as
 68000 machine code inside a small purpose-built Amiga emulator compiled to
 WebAssembly. Only what the routine touches is emulated: chip RAM, the 68000,
 Paula's four audio DMA channels, the CIA-B timers that pace playback, and the
 three exec calls the routine makes to get its interrupt.
+
+[![ProTracker running in the browser](docs/screenshot.png)](https://andremichelle.github.io/ProTracker/)
 
 The project started as an emulation of Karsten Obarski's Ultimate SoundTracker
 V1.8 binary, which is why the exports are still prefixed `ust_`. That backend
@@ -94,7 +98,7 @@ song's position list, `Channels` the four Paula channels.
 ```
 npm install
 npm run dev        # http://localhost:8080
-npm run build      # dist/, base path /UltimateSoundTracker/
+npm run build      # dist/, base path /ProTracker/
 npm run wasm       # rebuild assets/ust.wasm and the native harness
 ```
 
