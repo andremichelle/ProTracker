@@ -2,3 +2,5 @@
 emu/native/ust-native
 *.wav
 compare/*.mod
+node_modules/
+dist/

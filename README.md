@@ -46,14 +46,16 @@ instrument layout by the web page (`web/mod15.js`), as ProTracker does.
 ## Layout
 
 ```
-assets/       ptplay (routine + glue), thieves.mod (demo module)
+assets/       ptplay (routine + glue), ust.wasm (built),
+              mods/ (the 8bitboy collection + index.json for the dropdown);
+              served as Vite's public dir
 emu/ust.c     the emulator and its C API
 emu/pt/       PT-CIAPlay.s (original), ptglue.s
 emu/musashi/  Musashi 68000 core (Karl Stenerud, MIT), configured as a plain 68000;
               the FPU/softfloat files stay only because m68kcpu.c includes them
 emu/native/   command line harness that renders a module to WAV
-emu/build.sh  builds web/ust.wasm (emcc) and emu/native/ust-native (cc)
-web/          demo page and AudioWorklet host
+emu/build.sh  builds assets/ust.wasm (emcc) and emu/native/ust-native (cc)
+src/          the web app: openDAW SDK (lib-jsx, lib-dom, lib-std), TypeScript, Vite
 tools/        comparison tools
 compare/      A/B page against reference renders
 ```
@@ -76,17 +78,30 @@ exported `memory`.
 | `ust_song_pos()`, `ust_row()`, `ust_speed()`, `ust_tempo()`, `ust_tick_hz()`, `ust_pattern()`, `ust_song_len()`, `ust_title()`, `ust_cell(ch)` | replayer state |
 | `ust_chan_period(ch)`, `ust_chan_volume(ch)`, `ust_chan_dma(ch)` | Paula register view |
 
-## Running the demo
+## The app
+
+`src/` is a Vite + TypeScript app built on the openDAW SDK, following the
+openDAW studio conventions: components take a `Construct` with a `lifecycle`
+that owns their subscriptions, models are `DefaultObservableValue`s,
+stylesheets are adopted per component (`@opendaw/lib-jsx`, `@opendaw/lib-dom`,
+`@opendaw/lib-std`, colour tokens from `@opendaw/studio-enums`). `Player` owns the AudioContext and the worklet
+(`src/worklet/processor.ts`, bundled with `?worker&url`); the WASM bytes are
+compiled inside the worklet because Chrome does not deliver a posted
+`WebAssembly.Module` to one. `PatternView` is the step table: the 64 rows of
+the current pattern with the playing row fixed in the middle, `Positions` the
+song's position list, `Channels` the four Paula channels.
 
 ```
-cd emu && ./build.sh
-cd .. && python3 -m http.server 8765
-open http://localhost:8765/web/
+npm install
+npm run dev        # http://localhost:8080
+npm run build      # dist/, base path /UltimateSoundTracker/
+npm run wasm       # rebuild assets/ust.wasm and the native harness
 ```
 
-Press Play; pick any `.mod` with the file input. The page boots the emulator
-inside an AudioWorklet (the WASM bytes are compiled there, because Chrome does
-not deliver a posted `WebAssembly.Module` to a worklet).
+Pushing to `main` deploys `dist/` to GitHub Pages through
+`.github/workflows/pages.yml` (set the repository's Pages source to "GitHub
+Actions" once). The committed `assets/ust.wasm` is what gets deployed, so
+rebuild it with `npm run wasm` after changing the emulator.
 
 ## Testing against references
 
@@ -126,5 +141,4 @@ emulator does not; it is below audibility.
 
 Musashi is MIT licensed, see `emu/musashi/readme.txt`. The playroutine is
 Peter Hanning's, distributed with ProTracker for use in other productions.
-"the thieves" is Karsten Obarski's example module from the UST 1.8 master
-disk, converted to the 31 instrument layout.
+The modules in `assets/mods/` are the 8bitboy collection.

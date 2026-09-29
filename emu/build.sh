@@ -1,5 +1,5 @@
 #!/bin/sh
-# Builds the WASM module (web/ust.wasm) and the native test harness (emu/native/ust-native).
+# Builds the WASM module (assets/ust.wasm) and the native test harness (emu/native/ust-native).
 set -e
 cd "$(dirname "$0")"
 
@@ -15,8 +15,8 @@ if command -v emcc >/dev/null 2>&1; then
     -sSTANDALONE_WASM=1 --no-entry \
     -sEXPORTED_FUNCTIONS="[$EXPORTS]" \
     -sINITIAL_MEMORY=8388608 -sSTACK_SIZE=131072 -sALLOW_MEMORY_GROWTH=0 \
-    -o ../web/ust.wasm
-  ls -la ../web/ust.wasm
+    -o ../assets/ust.wasm
+  ls -la ../assets/ust.wasm
 else
   echo "emcc not found, skipping wasm build"
 fi
