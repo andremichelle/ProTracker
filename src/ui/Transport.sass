@@ -32,6 +32,18 @@ component
     &:hover
       border-color: var(--color-gray)
 
+  .url
+    font: inherit
+    color: var(--color-cream)
+    background-color: var(--color-panel-background-bright)
+    border: 1px solid var(--color-shadow)
+    border-radius: 3px
+    padding: 0.4em 0.6em
+
+    &:focus
+      border-color: var(--color-gray)
+      outline: none
+
     &[aria-pressed="true"]
       color: var(--color-black)
       background-color: var(--color-green)
@@ -48,6 +60,10 @@ component
     b
       font-weight: 500
       color: var(--color-cream)
+
+    .elapsed
+      color: var(--color-green)
+      font-variant-numeric: tabular-nums
 
   .repo
     color: var(--color-dark)

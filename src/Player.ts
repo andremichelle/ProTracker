@@ -16,6 +16,10 @@ export class Player {
     private node: Option<AudioWorkletNode> = Option.None
     private analyser: AnalyserNode | null = null
     private status: Nullable<Status> = null
+    // Wall-clock elapsed playback time (DOS-tracker-style "time played" readout), independent
+    // of the worklet's own position/pattern state - just accumulated since Play was pressed.
+    private playStartMs: Nullable<number> = null
+    private accumulatedMs = 0
 
     constructor(private readonly baseUrl: string) {
         this.filter.subscribe(owner => this.send({type: "filter", value: owner.getValue()}))
@@ -24,6 +28,10 @@ export class Player {
     }
 
     get currentStatus(): Nullable<Status> {return this.status}
+
+    get elapsedMs(): number {
+        return this.accumulatedMs + (this.playStartMs === null ? 0 : performance.now() - this.playStartMs)
+    }
 
     getSpectrum(target: Uint8Array<ArrayBuffer>): boolean {
         if (this.analyser === null) {
@@ -47,6 +55,22 @@ export class Player {
         this.load(new Uint8Array(await response.arrayBuffer()))
     }
 
+    /** Fetches an arbitrary, absolute URL (as opposed to loadUrl, which is for the app's own bundled assets). */
+    async loadFromUrl(url: string): Promise<void> {
+        let response: globalThis.Response
+        try {
+            response = await fetch(url)
+        } catch (reason) {
+            this.error.setValue(`${url}: ${String(reason)}`)
+            return
+        }
+        if (!response.ok) {
+            this.error.setValue(`${url}: ${response.status}`)
+            return
+        }
+        this.load(new Uint8Array(await response.arrayBuffer()))
+    }
+
     load(bytes: Uint8Array): void {
         const result = tryCatch(() => Module.parse(bytes))
         if (result.status === "failure") {
@@ -55,6 +79,8 @@ export class Player {
         }
         this.status = null
         this.error.setValue("")
+        this.accumulatedMs = 0
+        this.playStartMs = null
         this.module.wrap(result.value)
         this.send({type: "module", module: result.value.data})
     }
@@ -65,11 +91,16 @@ export class Player {
         await this.context.unwrap().resume()
         this.send({type: "play"})
         this.playing.setValue(true)
+        this.playStartMs = performance.now()
     }
 
     stop(): void {
         this.send({type: "stop"})
         this.playing.setValue(false)
+        if (this.playStartMs !== null) {
+            this.accumulatedMs += performance.now() - this.playStartMs
+            this.playStartMs = null
+        }
     }
 
     private send(request: Request): void {this.node.ifSome(node => node.port.postMessage(request))}

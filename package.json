@@ -7,14 +7,18 @@
     "dev": "vite --clearScreen false --host",
     "build": "tsc --noEmit && vite build",
     "preview": "vite preview --host",
-    "wasm": "sh emu/build.sh"
+    "wasm": "sh emu/build.sh",
+    "test": "vitest run"
   },
   "dependencies": {
-    "@opendaw/studio-sdk": "^0.0.173"
+    "@opendaw/studio-sdk": "^0.0.173",
+    "three": "^0.186.1"
   },
   "devDependencies": {
+    "@types/three": "^0.186.0",
     "sass": "^1.105.1",
     "typescript": "^7.0.2",
-    "vite": "^8.3.3"
+    "vite": "^8.3.3",
+    "vitest": "^5.0.3"
   }
 }

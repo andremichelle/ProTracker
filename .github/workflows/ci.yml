@@ -1,0 +1,28 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm test
+      - run: npm run build
+
+  # Note: the WASM emulator (`npm run wasm` -> emu/build.sh) is intentionally
+  # not run here. It requires emcc (Emscripten) to produce assets/ust.wasm,
+  # which is not installed on ubuntu-latest by default and would need extra
+  # toolchain setup (e.g. the emsdk action). The built assets/ust.wasm is
+  # committed to the repo, so it isn't required for `npm run build` to
+  # succeed. Add a dedicated job with the emsdk toolchain if WASM builds
+  # need to be verified in CI.

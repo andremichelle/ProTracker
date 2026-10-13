@@ -142,6 +142,17 @@ correlation 0.94 to 0.99 per second after allowing a local lag of up to
 lag comes from Paula's per-scanline DMA slots, which UAE models and this
 emulator does not; it is below audibility.
 
+## Roadmap
+
+Long-term, not currently planned:
+
+* **Extended formats** - classic MOD/ProTracker files are tied to 4 channels.
+  Modern software or expanded tags (`6CHN`, `8CHN`, or PC trackers like
+  OpenMPT) pack more channels into a module file; the current replayer and
+  emulator only drive Paula's 4 DMA channels, so these aren't playable yet.
+* **Newer tracker formats** (XM, IT, S3M) - a different format family
+  entirely, would need its own loader/replayer path alongside the PT one.
+
 ## Licenses
 
 Musashi is MIT licensed, see `emu/musashi/readme.txt`. The playroutine is

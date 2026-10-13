@@ -1,0 +1,106 @@
+component
+  display: flex
+  flex-direction: column
+  min-height: 0
+  overflow: hidden
+  background-color: #020305
+  border: 1px solid var(--color-panel-background-bright)
+  border-radius: 4px
+
+  .controls
+    display: flex
+    flex-wrap: wrap
+    align-items: center
+    gap: 1rem
+    padding: 0.4rem 0.625rem
+    font-size: 0.72rem
+    color: var(--color-gray)
+    border-bottom: 1px solid var(--color-panel-background-bright)
+    background-color: var(--color-panel-background)
+
+    label
+      display: flex
+      align-items: center
+      gap: 0.4rem
+      white-space: nowrap
+
+    input[type="range"]
+      width: 5.5rem
+
+    select
+      font: inherit
+      color: inherit
+      background-color: var(--color-panel-background-bright)
+      border: 1px solid var(--color-shadow)
+      border-radius: 3px
+      padding: 0.15em 0.3em
+
+    input[type="checkbox"]
+      accent-color: #0affd9
+
+  .stage
+    position: relative
+    flex: 1
+    min-height: 0
+
+  .canvas-host
+    position: absolute
+    inset: 0
+
+    canvas
+      display: block
+      width: 100%
+      height: 100%
+
+  .hud
+    position: absolute
+    inset: 0
+    pointer-events: none
+    display: flex
+    flex-direction: column
+    justify-content: space-between
+    font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace
+
+  .panel
+    margin: 0.75rem
+    padding: 0.6rem 0.9rem
+    background: rgba(5, 14, 16, 0.72)
+    border: 1px solid rgba(0, 255, 224, 0.25)
+    box-shadow: 0 0 1.5rem rgba(0, 255, 224, 0.06)
+    border-radius: 6px
+    color: #8fe3d8
+    font-size: 0.72rem
+    letter-spacing: 0.05em
+    width: fit-content
+
+    b
+      display: block
+      color: #d9fff6
+      font-size: 0.85rem
+      letter-spacing: 0.15em
+      text-transform: uppercase
+      text-shadow: 0 0 0.6rem rgba(0, 255, 224, 0.6)
+      margin-bottom: 0.3rem
+
+    span
+      display: block
+      opacity: 0.85
+
+  .console
+    position: absolute
+    left: 0.75rem
+    right: 0.75rem
+    bottom: 0.75rem
+    max-height: 7.5rem
+    padding: 0.4rem 0.6rem
+    background: rgba(0, 0, 0, 0.78)
+    border: 1px solid rgba(80, 255, 120, 0.3)
+    border-radius: 4px
+    color: #6aff8a
+    font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace
+    font-size: 0.68rem
+    line-height: 1.5
+    white-space: pre-wrap
+    pointer-events: none
+    overflow: hidden
+    text-shadow: 0 0 0.4rem rgba(80, 255, 120, 0.5)

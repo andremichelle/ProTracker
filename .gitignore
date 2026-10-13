@@ -4,3 +4,4 @@ emu/native/ust-native
 compare/*.mod
 node_modules/
 dist/
+.DS_Store
