@@ -10,11 +10,11 @@
     "wasm": "sh emu/build.sh"
   },
   "dependencies": {
-    "@opendaw/studio-sdk": "^0.0.172"
+    "@opendaw/studio-sdk": "^0.0.173"
   },
   "devDependencies": {
-    "sass": "^1.88.0",
-    "typescript": "^5.6.0",
-    "vite": "^7.0.2"
+    "sass": "^1.105.1",
+    "typescript": "^7.0.2",
+    "vite": "^8.3.3"
   }
 }

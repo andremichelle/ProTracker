@@ -19,6 +19,26 @@ component
     font-weight: 500
     margin-right: 0.25rem
 
+  .mode
+    font: inherit
+    color: var(--color-gray)
+    background-color: var(--color-panel-background-bright)
+    border: 1px solid var(--color-shadow)
+    border-radius: 3px
+    padding: 0.4em 0.75em
+    cursor: pointer
+    white-space: nowrap
+
+    &:hover
+      border-color: var(--color-gray)
+
+    &[aria-pressed="true"]
+      color: var(--color-black)
+      background-color: var(--color-green)
+      border-color: var(--color-green)
+      opacity: 1
+      cursor: default
+
   .info
     margin-left: auto
     display: flex

@@ -14,6 +14,7 @@ export class Player {
 
     private context: Option<AudioContext> = Option.None
     private node: Option<AudioWorkletNode> = Option.None
+    private analyser: AnalyserNode | null = null
     private status: Nullable<Status> = null
 
     constructor(private readonly baseUrl: string) {
@@ -23,6 +24,15 @@ export class Player {
     }
 
     get currentStatus(): Nullable<Status> {return this.status}
+
+    getSpectrum(target: Uint8Array<ArrayBuffer>): boolean {
+        if (this.analyser === null) {
+            target.fill(0)
+            return false
+        }
+        this.analyser.getByteFrequencyData(target)
+        return true
+    }
 
     async listModules(): Promise<ReadonlyArray<string>> {
         return (await fetch(`${this.baseUrl}mods/index.json`)).json()
@@ -74,9 +84,14 @@ export class Player {
         ])
         await context.audioWorklet.addModule(processorUrl)
         const node = new AudioWorkletNode(context, "pt-processor", {outputChannelCount: [2]})
+        const analyser = context.createAnalyser()
+        analyser.fftSize = 512
+        analyser.smoothingTimeConstant = 0.78
         node.port.onmessage = (event: MessageEvent<Response>) => this.onResponse(event.data)
-        node.connect(context.destination)
+        node.connect(analyser)
+        analyser.connect(context.destination)
         this.node = Option.wrap(node)
+        this.analyser = analyser
         this.send({
             type: "init",
             wasm: new Uint8Array(wasm),

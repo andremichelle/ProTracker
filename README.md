@@ -93,7 +93,8 @@ stylesheets are adopted per component (`@opendaw/lib-jsx`, `@opendaw/lib-dom`,
 compiled inside the worklet because Chrome does not deliver a posted
 `WebAssembly.Module` to one. `PatternView` is the step table: the 64 rows of
 the current pattern with the playing row fixed in the middle, `Positions` the
-song's position list, `Channels` the four Paula channels.
+song's position list, `Channels` the four Paula channels. The transport can
+switch between the tracker layout and an audio-reactive ASCII spectrum view.
 
 ```
 npm install

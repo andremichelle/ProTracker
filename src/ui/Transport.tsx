@@ -9,13 +9,16 @@ import {ModuleSelect} from "@/ui/components/ModuleSelect"
 
 const className = Html.adoptStyleSheet(css, "Transport")
 
+export type ViewMode = "tracker" | "visualizer"
+
 type Construct = {
     lifecycle: Lifecycle
     player: Player
     initialModule: string
+    viewMode: DefaultObservableValue<ViewMode>
 }
 
-export const Transport = ({lifecycle, player, initialModule}: Construct) => {
+export const Transport = ({lifecycle, player, initialModule, viewMode}: Construct) => {
     const title = Inject.value("")
     const speed = Inject.value("")
     const timer = Inject.value("")
@@ -23,12 +26,27 @@ export const Transport = ({lifecycle, player, initialModule}: Construct) => {
     const stopped = lifecycle.own(new DefaultObservableValue(true))
     lifecycle.own(player.playing.catchupAndSubscribe(owner => stopped.setValue(!owner.getValue())))
     const fileInput: HTMLInputElement = (
-        <input type="file" accept=".mod,.MOD" hidden
+        <input type="file" accept=".mod,.MOD" hidden=""
                onchange={async () => {
                    const file = fileInput.files?.[0]
                    if (isDefined(file)) {player.load(new Uint8Array(await file.arrayBuffer()))}
                }}/>
     )
+    const trackerButton: HTMLButtonElement = (
+        <button className="mode" type="button" aria-pressed="true"
+                onclick={() => viewMode.setValue("tracker")}>Tracker</button>
+    )
+    const visualizerButton: HTMLButtonElement = (
+        <button className="mode" type="button" aria-pressed="false"
+                onclick={() => viewMode.setValue("visualizer")}>ASCII view</button>
+    )
+    lifecycle.own(viewMode.catchupAndSubscribe(owner => {
+        const tracker = owner.getValue() === "tracker"
+        trackerButton.disabled = tracker
+        trackerButton.setAttribute("aria-pressed", String(tracker))
+        visualizerButton.disabled = !tracker
+        visualizerButton.setAttribute("aria-pressed", String(!tracker))
+    }))
     lifecycle.own(player.error.catchupAndSubscribe(owner => error.value = owner.getValue()))
     lifecycle.own(player.module.catchupAndSubscribe(option => title.value = option.mapOr(module => module.title || "(untitled)", "")))
     lifecycle.own(AnimationFrame.add(() => {
@@ -40,6 +58,8 @@ export const Transport = ({lifecycle, player, initialModule}: Construct) => {
         <div className={className}>
             <div className="line">
                 <span className="brand">ProTracker 2.3A</span>
+                {trackerButton}
+                {visualizerButton}
                 <Button lifecycle={lifecycle} label="Play" primary enabled={stopped}
                         onClick={() => player.play().catch(reason => player.error.setValue(String(reason)))}/>
                 <Button lifecycle={lifecycle} label="Stop" enabled={player.playing} onClick={() => player.stop()}/>
