@@ -9,7 +9,6 @@ import {Positions} from "@/ui/Positions"
 import {Channels} from "@/ui/Channels"
 import {Visualizer} from "@/ui/Visualizer"
 import {Visualizer3D} from "@/ui/Visualizer3D"
-import {VisualizerWebGL} from "@/ui/VisualizerWebGL"
 
 const className = Html.adoptStyleSheet(css, "App")
 
@@ -32,9 +31,20 @@ export const App = ({lifecycle, player, initialModule}: Construct) => {
     )
     const visualizerView: HTMLDivElement = <Visualizer lifecycle={lifecycle} player={player}/>
     const ascii3dView: HTMLDivElement = <Visualizer3D lifecycle={lifecycle} player={player}/>
-    const webglView: HTMLDivElement = <VisualizerWebGL lifecycle={lifecycle} player={player}/>
+    // three.js is the bulk of the bundle, so the WebGL view loads on first use
+    const webglView: HTMLDivElement = <div className="webgl-view"/>
+    let webglRequested = false
     lifecycle.own(viewMode.catchupAndSubscribe(owner => {
         const mode = owner.getValue()
+        if (mode === "webgl" && !webglRequested) {
+            webglRequested = true
+            import("@/ui/VisualizerWebGL").then(({VisualizerWebGL}) =>
+                    webglView.appendChild(<VisualizerWebGL lifecycle={lifecycle} player={player}/>),
+                reason => {
+                    webglRequested = false
+                    player.error.setValue(String(reason))
+                })
+        }
         trackerView.hidden = mode !== "tracker"
         visualizerView.hidden = mode !== "visualizer"
         ascii3dView.hidden = mode !== "ascii3d"
