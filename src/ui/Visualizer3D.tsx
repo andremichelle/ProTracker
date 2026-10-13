@@ -1,20 +1,19 @@
-import css from "./Visualizer3D.sass?inline"
+import css from "./Visualizer.sass?inline"
 import {DefaultObservableValue, isDefined, Lifecycle} from "@opendaw/lib-std"
 import {createElement} from "@opendaw/lib-jsx"
 import {AnimationFrame, Html} from "@opendaw/lib-dom"
 import {Player} from "@/Player"
 import {AudioState, sampleBands} from "@/ui/audioReactive"
+import {Select} from "@/ui/components/Select"
+import {Slider} from "@/ui/components/Slider"
 import {
-    drawMatrixRain, matrixChars, ramp, SizeId, SizePreset, SIZE_OPTIONS, SIZE_PRESETS, ThemeId, THEME_OPTIONS
+    drawMatrixRain, matrixChars, ramp, SIZE_OPTIONS, SIZE_PRESETS, SizeId, SizePreset, THEME_OPTIONS, ThemeId
 } from "@/ui/visualizerTheme"
 
 const className = Html.adoptStyleSheet(css, "Visualizer3D")
 
 type Vec3 = readonly [number, number, number]
 type Triangle = readonly [Vec3, Vec3, Vec3]
-
-// ---- Shape geometry: each shape is just a flat list of triangles (no shared vertex indexing),
-// so adding a new shape only means producing a new Triangle[] and registering it below.
 
 const PHI = (1 + Math.sqrt(5)) / 2
 const normalizeVertex = ([x, y, z]: Vec3): Vec3 => {
@@ -112,7 +111,7 @@ const SHAPES: Record<Exclude<ShapeId, "equalizer">, ReadonlyArray<Triangle>> = {
 // equalizer's many independent boxes aren't guaranteed consistent winding,
 // so it relies purely on the depth test instead.
 const SHAPE_CULL: Record<ShapeId, boolean> = {icosahedron: true, fractal: true, globe: true, equalizer: false}
-export const SHAPE_OPTIONS: ReadonlyArray<{ id: ShapeId, label: string }> = [
+export const SHAPE_OPTIONS: ReadonlyArray<{id: ShapeId, label: string}> = [
     {id: "icosahedron", label: "Icosahedron"},
     {id: "fractal", label: "Sierpinski Fractal"},
     {id: "globe", label: "Globe"},
@@ -178,7 +177,7 @@ const draw = (screen: HTMLPreElement, size: SizePreset, spectrum: Uint8Array, pl
 
     const status = player.currentStatus
     const state = player.playing.getValue() ? "PLAYING" : "STANDBY"
-    write(0, 2, ` PROTRACKER+ 4.2B  /  BB-STYLE ASCII 3D  /  ${state} `)
+    write(0, 2, ` PROTRACKER 2.3A  /  BB-STYLE ASCII 3D  /  ${state} `)
 
     const plotTop = 1
     const plotBottom = rows - 2
@@ -282,66 +281,30 @@ export const Visualizer3D = ({lifecycle, player}: Construct) => {
     const reactivity = lifecycle.own(new DefaultObservableValue(1))
     const shape = lifecycle.own(new DefaultObservableValue<ShapeId>("icosahedron"))
     const theme = lifecycle.own(new DefaultObservableValue<ThemeId>("classic"))
-    let sizePreset = SIZE_PRESETS.normal
-
-    const speedValue = <span>1.00x</span> as HTMLSpanElement
-    const reactivityValue = <span>1.00x</span> as HTMLSpanElement
-    const speedInput: HTMLInputElement = (
-        <input type="range" min="0.1" max="3" step="0.05" value="1"
-               oninput={() => {
-                   const value = parseFloat(speedInput.value)
-                   speed.setValue(value)
-                   speedValue.textContent = `${value.toFixed(2)}x`
-               }}/>
-    )
-    const reactivityInput: HTMLInputElement = (
-        <input type="range" min="0" max="2" step="0.05" value="1"
-               oninput={() => {
-                   const value = parseFloat(reactivityInput.value)
-                   reactivity.setValue(value)
-                   reactivityValue.textContent = `${value.toFixed(2)}x`
-               }}/>
-    )
-    const shapeSelect: HTMLSelectElement = (
-        <select onchange={() => shape.setValue(shapeSelect.value as ShapeId)}>
-            {SHAPE_OPTIONS.map(option => <option value={option.id}>{option.label}</option>)}
-        </select>
-    )
-    const themeSelect: HTMLSelectElement = (
-        <select onchange={() => {
-            const id = themeSelect.value as ThemeId
-            theme.setValue(id)
-            element.classList.remove("theme-classic", "theme-matrix", "theme-amber")
-            element.classList.add(`theme-${id}`)
-        }}>
-            {THEME_OPTIONS.map(option => <option value={option.id}>{option.label}</option>)}
-        </select>
-    )
-    const sizeSelect: HTMLSelectElement = (
-        <select onchange={() => {
-            const id = sizeSelect.value as SizeId
-            sizePreset = SIZE_PRESETS[id]
-            screen.style.fontSize = `${sizePreset.fontSizeRem}rem`
-        }}>
-            {SIZE_OPTIONS.map(option => <option value={option.id} selected={option.id === "normal"}>{option.label}</option>)}
-        </select>
-    )
-    const controlsBar: HTMLDivElement = (
-        <div className="controls">
-            <label>Speed {speedInput} {speedValue}</label>
-            <label>Reactivity {reactivityInput} {reactivityValue}</label>
-            <label>Shape {shapeSelect}</label>
-            <label>Theme {themeSelect}</label>
-            <label>Size {sizeSelect}</label>
+    const size = lifecycle.own(new DefaultObservableValue<SizeId>("normal"))
+    const element: HTMLDivElement = (
+        <div className={className}>
+            <div className="controls">
+                <Slider lifecycle={lifecycle} model={speed} label="Speed" min={0.1} max={3} step={0.05}/>
+                <Slider lifecycle={lifecycle} model={reactivity} label="Reactivity" min={0} max={2} step={0.05}/>
+                <Select lifecycle={lifecycle} model={shape} label="Shape" options={SHAPE_OPTIONS}/>
+                <Select lifecycle={lifecycle} model={theme} label="Theme" options={THEME_OPTIONS}/>
+                <Select lifecycle={lifecycle} model={size} label="Size" options={SIZE_OPTIONS}/>
+            </div>
+            {screen}
         </div>
     )
-    const element: HTMLDivElement = <div className={`${className} theme-classic`}>{controlsBar}{screen}</div>
+    lifecycle.own(theme.catchupAndSubscribe(owner => {
+        THEME_OPTIONS.forEach(({id}) => element.classList.toggle(`theme-${id}`, id === owner.getValue()))
+    }))
+    lifecycle.own(size.catchupAndSubscribe(owner => screen.style.fontSize = `${SIZE_PRESETS[owner.getValue()].fontSizeRem}rem`))
     const spectrum = new Uint8Array(256)
     const audio: AudioState = {lastTime: performance.now(), bassEnvelope: 0, punch: 0}
     lifecycle.own(AnimationFrame.add(() => {
         if (element.closest("[hidden]") !== null || element.clientWidth === 0) {return}
         player.getSpectrum(spectrum)
-        draw(screen, sizePreset, spectrum, player, performance.now(), audio, {speed, reactivity, shape, theme})
+        draw(screen, SIZE_PRESETS[size.getValue()], spectrum, player, performance.now(), audio,
+            {speed, reactivity, shape, theme})
     }))
     return element
 }

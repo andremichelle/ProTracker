@@ -1,9 +1,13 @@
 import css from "./VisualizerWebGL.sass?inline"
-import {DefaultObservableValue, isDefined, Lifecycle, Terminable} from "@opendaw/lib-std"
+import {DefaultObservableValue, isDefined, Lifecycle, Nullable, Terminable} from "@opendaw/lib-std"
 import {createElement, Inject} from "@opendaw/lib-jsx"
-import {AnimationFrame, Html} from "@opendaw/lib-dom"
+import {AnimationFrame, Events, Html} from "@opendaw/lib-dom"
 import {Player} from "@/Player"
 import {AudioState, sampleBands} from "@/ui/audioReactive"
+import {formatElapsed} from "@/ui/Transport"
+import {Checkbox} from "@/ui/components/Checkbox"
+import {Select} from "@/ui/components/Select"
+import {Slider} from "@/ui/components/Slider"
 import * as THREE from "three"
 import {EffectComposer} from "three/addons/postprocessing/EffectComposer.js"
 import {RenderPass} from "three/addons/postprocessing/RenderPass.js"
@@ -93,13 +97,13 @@ const VGA_BOUNCE_COLORS = [9, 10, 11, 12, 13, 14, 15, 3, 2]
 // utility by Thomas Mönkemeier known for its VGA-mode interface, not a reproduction of its actual
 // screens/code. No demoscene group names, logos, or real scrolltext are referenced or paraphrased.
 const VGA_SCROLLTEXT =
-    "   WELCOME TO THE PROTRACKER+ 4.2B VGA TRIBUTE SCREEN ...   " +
+    "   WELCOME TO THE PROTRACKER 2.3A VGA TRIBUTE SCREEN ...   " +
     "A SMALL ORIGINAL HOMAGE TO THE EARLY-1990S MS-DOS ERA, " +
     "AND ESPECIALLY TO VGA-COPY, THOMAS MOENKEMEIER'S BELOVED FLOPPY-DISK UTILITY " +
     "THAT TAUGHT A GENERATION WHAT A VGA SCREEN COULD LOOK LIKE ...   " +
     "BIG RESPECT TO EVERY CODER, COMPOSER AND SYSOP FROM THAT ERA ...   " +
     "LONG LIVE THE FLOPPY DISK, THE TRACKER AND THE SCENE ...   " +
-    "THANKS FOR LISTENING ON PROTRACKER+ - NOW GO MAKE SOME NOISE ...   "
+    "THANKS FOR LISTENING ON PROTRACKER - NOW GO MAKE SOME NOISE ...   "
 
 type VgaBounce = {x: number, y: number, vx: number, vy: number, colorIndex: number, pulse: number}
 
@@ -493,16 +497,9 @@ const drawVgaDiamond = (ctx: CanvasRenderingContext2D, cx: number, cy: number, r
     ctx.fill()
 }
 
-const formatElapsed = (ms: number): string => {
-    const totalSeconds = Math.floor(ms / 1000)
-    const minutes = Math.min(99, Math.floor(totalSeconds / 60))
-    const seconds = totalSeconds % 60
-    return `${minutes.toString().padStart(2, "0")}:${seconds.toString().padStart(2, "0")}`
-}
-
 export const VisualizerWebGL = ({lifecycle, player}: Construct) => {
     const canvasHost: HTMLDivElement = <div className="canvas-host"/>
-    const title = Inject.value("PROTRACKER+ 4.2B // WEBGL VIEW")
+    const title = Inject.value("PROTRACKER 2.3A // WEBGL VIEW")
     const stateLine = Inject.value("STANDBY")
     const statusLine = Inject.value("")
     const hud: HTMLDivElement = (
@@ -518,79 +515,42 @@ export const VisualizerWebGL = ({lifecycle, player}: Construct) => {
 
     const speed = lifecycle.own(new DefaultObservableValue(1))
     const reactivity = lifecycle.own(new DefaultObservableValue(1))
-    const speedValue = <span>1.00x</span> as HTMLSpanElement
-    const reactivityValue = <span>1.00x</span> as HTMLSpanElement
-    const speedInput: HTMLInputElement = (
-        <input type="range" min="0.1" max="3" step="0.05" value="1"
-               oninput={() => {
-                   const value = parseFloat(speedInput.value)
-                   speed.setValue(value)
-                   speedValue.textContent = `${value.toFixed(2)}x`
-               }}/>
-    )
-    const reactivityInput: HTMLInputElement = (
-        <input type="range" min="0" max="2" step="0.05" value="1"
-               oninput={() => {
-                   const value = parseFloat(reactivityInput.value)
-                   reactivity.setValue(value)
-                   reactivityValue.textContent = `${value.toFixed(2)}x`
-               }}/>
-    )
     const glow = lifecycle.own(new DefaultObservableValue(1))
-    const glowValue = <span>1.00x</span> as HTMLSpanElement
-    const glowInput: HTMLInputElement = (
-        <input type="range" min="0" max="2.5" step="0.05" value="1"
-               oninput={() => {
-                   const value = parseFloat(glowInput.value)
-                   glow.setValue(value)
-                   glowValue.textContent = `${value.toFixed(2)}x`
-               }}/>
-    )
-    const presetSelect: HTMLSelectElement = (
-        <select>
-            {PRESETS.map(preset => <option value={preset.name}>{preset.name}</option>)}
-        </select>
-    )
-    const cycleInput: HTMLInputElement = <input type="checkbox"/>
-    const cycleSecondsValue = <span>20s</span> as HTMLSpanElement
-    const cycleSecondsInput: HTMLInputElement = (
-        <input type="range" min="5" max="120" step="5" value="20"
-               oninput={() => {cycleSecondsValue.textContent = `${cycleSecondsInput.value}s`}}/>
-    )
-    const spinInput: HTMLInputElement = <input type="checkbox" checked/>
+    const presetName = lifecycle.own(new DefaultObservableValue(PRESETS[0].name))
+    const cycle = lifecycle.own(new DefaultObservableValue(false))
+    const cycleSeconds = lifecycle.own(new DefaultObservableValue(20))
+    const spin = lifecycle.own(new DefaultObservableValue(true))
+    const showConsole = lifecycle.own(new DefaultObservableValue(false))
     const consoleEl: HTMLDivElement = <div className="console"/>
-    consoleEl.hidden = true
     stage.appendChild(consoleEl)
-    const consoleInput: HTMLInputElement = (
-        <input type="checkbox" onchange={() => {consoleEl.hidden = !consoleInput.checked}}/>
+    const cycleSecondsSlider: HTMLLabelElement = (
+        <Slider lifecycle={lifecycle} model={cycleSeconds} label="Every" min={5} max={120} step={5}
+                format={value => `${value}s`}/>
     )
-    const cycleDurationLabel: HTMLLabelElement = (
-        <label>Every {cycleSecondsInput} {cycleSecondsValue}</label>
-    )
-    cycleDurationLabel.hidden = true
-    cycleInput.addEventListener("change", () => {cycleDurationLabel.hidden = !cycleInput.checked})
+    lifecycle.own(cycle.catchupAndSubscribe(owner => cycleSecondsSlider.hidden = !owner.getValue()))
+    lifecycle.own(showConsole.catchupAndSubscribe(owner => consoleEl.hidden = !owner.getValue()))
     const controlsBar: HTMLDivElement = (
         <div className="controls">
             <div className="group">
-                <label>Preset {presetSelect}</label>
-                <label>{cycleInput} Auto-cycle</label>
-                {cycleDurationLabel}
+                <Select lifecycle={lifecycle} model={presetName} label="Preset"
+                        options={PRESETS.map(({name}) => ({id: name, label: name}))}/>
+                <Checkbox lifecycle={lifecycle} model={cycle} label="Auto-cycle"/>
+                {cycleSecondsSlider}
             </div>
             <div className="group">
-                <label>Speed {speedInput} {speedValue}</label>
-                <label>Reactivity {reactivityInput} {reactivityValue}</label>
-                <label>Glow {glowInput} {glowValue}</label>
+                <Slider lifecycle={lifecycle} model={speed} label="Speed" min={0.1} max={3} step={0.05}/>
+                <Slider lifecycle={lifecycle} model={reactivity} label="Reactivity" min={0} max={2} step={0.05}/>
+                <Slider lifecycle={lifecycle} model={glow} label="Glow" min={0} max={2.5} step={0.05}/>
             </div>
             <div className="group">
-                <label>{spinInput} Free spin</label>
-                <label>{consoleInput} Console</label>
+                <Checkbox lifecycle={lifecycle} model={spin} label="Free spin"/>
+                <Checkbox lifecycle={lifecycle} model={showConsole} label="Console"/>
             </div>
         </div>
     )
     const element: HTMLDivElement = <div className={className}>{controlsBar}{stage}</div>
 
-    // Optional Doom/Quake-style console: a scrolling log of short status/fun lines, off by
-    // default. Purely cosmetic/debug flavor - nothing here is read back by anything else.
+    // Doom-style console, purely cosmetic
     const consoleLines: Array<string> = []
     const pushConsoleLine = (line: string): void => {
         consoleLines.push(line)
@@ -816,11 +776,11 @@ export const VisualizerWebGL = ({lifecycle, player}: Construct) => {
     }
     const raycaster = new THREE.Raycaster()
     const pointer = new THREE.Vector2()
-    let pointerDownAt: {x: number, y: number} | null = null
-    renderer.domElement.addEventListener("pointerdown", event => {
+    let pointerDownAt: Nullable<{x: number, y: number}> = null
+    lifecycle.own(Events.subscribe(renderer.domElement, "pointerdown", event => {
         pointerDownAt = {x: event.clientX, y: event.clientY}
-    })
-    renderer.domElement.addEventListener("pointerup", event => {
+    }))
+    lifecycle.own(Events.subscribe(renderer.domElement, "pointerup", event => {
         if (!activePreset.vga || pointerDownAt === null) {pointerDownAt = null; return}
         const moved = Math.hypot(event.clientX - pointerDownAt.x, event.clientY - pointerDownAt.y)
         pointerDownAt = null
@@ -830,7 +790,7 @@ export const VisualizerWebGL = ({lifecycle, player}: Construct) => {
         pointer.y = -((event.clientY - rect.top) / rect.height) * 2 + 1
         raycaster.setFromCamera(pointer, camera)
         if (raycaster.intersectObject(vgaPlane).length > 0) {triggerVgaFlip(performance.now())}
-    })
+    }))
 
     const starGeometry = new THREE.BufferGeometry()
     const starPositions = new Float32Array(STAR_COUNT * 3)
@@ -888,17 +848,15 @@ export const VisualizerWebGL = ({lifecycle, player}: Construct) => {
             vgaFlipActive = false
         }
     }
-    applyPreset(PRESETS[0])
-    pushConsoleLine(`PRESET: ${PRESETS[0].name.toUpperCase()}`)
     let lastCycleAt = performance.now()
-    presetSelect.addEventListener("change", () => {
-        const preset = PRESETS.find(p => p.name === presetSelect.value)
-        if (preset !== undefined) {
+    lifecycle.own(presetName.catchupAndSubscribe(owner => {
+        const preset = PRESETS.find(({name}) => name === owner.getValue())
+        if (isDefined(preset)) {
             applyPreset(preset)
             pushConsoleLine(`PRESET: ${preset.name.toUpperCase()}`)
             lastCycleAt = performance.now()
         }
-    })
+    }))
 
     lifecycle.own(AnimationFrame.add(() => {
         if (element.closest("[hidden]") !== null) {return}
@@ -979,9 +937,7 @@ export const VisualizerWebGL = ({lifecycle, player}: Construct) => {
             }
         }
 
-        // Free spin vs static: the checkbox simply flips OrbitControls' autoRotate; a
-        // drag/scroll/pinch still always takes over immediately either way.
-        controls.autoRotate = spinInput.checked
+        controls.autoRotate = spin.getValue()
         controls.autoRotateSpeed = 0.6 * speedValueNow + punch * 5 * reactivityValueNow
         controls.target.y = 1.2 + Math.sin(seconds * 0.2) * 0.3 * reactivityValueNow
         controls.update()
@@ -1035,7 +991,7 @@ export const VisualizerWebGL = ({lifecycle, player}: Construct) => {
             vgaCtx.textAlign = "center"
             vgaCtx.font = "bold 12px ui-monospace, Menlo, Consolas, monospace"
             vgaCtx.fillStyle = VGA_PALETTE[14]
-            vgaCtx.fillText("P R O T R A C K E R +   4 . 2 B", FB_WIDTH / 2, 14)
+            vgaCtx.fillText("P R O T R A C K E R   2 . 3 A", FB_WIDTH / 2, 14)
             vgaCtx.font = "9px ui-monospace, Menlo, Consolas, monospace"
             vgaCtx.fillStyle = VGA_PALETTE[11]
             vgaCtx.fillText("- V G A   T R I B U T E   S C R E E N -", FB_WIDTH / 2, 28)
@@ -1141,13 +1097,8 @@ export const VisualizerWebGL = ({lifecycle, player}: Construct) => {
         bloomPass.strength = (1.3 + punch * 2 * reactivityValueNow + treble * 0.4) * glowValueNow
         ;(floorGrid.material as THREE.Material).opacity = 0.25 + mid * 0.5 * reactivityValueNow
 
-        if (cycleInput.checked && now - lastCycleAt > parseFloat(cycleSecondsInput.value) * 1000) {
-            const currentIndex = PRESETS.indexOf(preset)
-            const next = PRESETS[(currentIndex + 1) % PRESETS.length]
-            applyPreset(next)
-            presetSelect.value = next.name
-            pushConsoleLine(`PRESET: ${next.name.toUpperCase()}`)
-            lastCycleAt = now
+        if (cycle.getValue() && now - lastCycleAt > cycleSeconds.getValue() * 1000) {
+            presetName.setValue(PRESETS[(PRESETS.indexOf(preset) + 1) % PRESETS.length].name)
         }
 
         const status = player.currentStatus
@@ -1156,7 +1107,7 @@ export const VisualizerWebGL = ({lifecycle, player}: Construct) => {
             ? `POS ${status.pos.toString().padStart(2, "0")}  PAT ${status.pattern.toString().padStart(2, "0")}  ROW ${status.row.toString().padStart(2, "0")}`
             : "LOAD A MODULE AND PRESS PLAY"
 
-        if (!consoleEl.hidden) {
+        if (showConsole.getValue()) {
             if (punch > 0.55 && now - lastPunchLogAt > 400) {
                 lastPunchLogAt = now
                 pushConsoleLine("PUNCH!")

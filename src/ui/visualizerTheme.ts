@@ -6,20 +6,20 @@ export const ramp = " .:-=+*#%@"
 export const matrixChars = "ﾊﾐﾋｰｳｼﾅﾁﾄﾓﾆﾗﾖﾓｴﾙﾈ0123456789"
 
 export type ThemeId = "classic" | "matrix" | "amber"
-export const THEME_OPTIONS: ReadonlyArray<{ id: ThemeId, label: string }> = [
+export const THEME_OPTIONS: ReadonlyArray<{id: ThemeId, label: string}> = [
     {id: "classic", label: "Classic (aalib)"},
     {id: "matrix", label: "Matrix"},
     {id: "amber", label: "Amber CRT"}
 ]
 
 export type SizeId = "compact" | "normal" | "large"
-export type SizePreset = { cellWidth: number, fontSizeRem: number }
+export type SizePreset = {cellWidth: number, fontSizeRem: number}
 export const SIZE_PRESETS: Record<SizeId, SizePreset> = {
     compact: {cellWidth: 5, fontSizeRem: 0.46},
     normal: {cellWidth: 7, fontSizeRem: 0.64},
     large: {cellWidth: 10, fontSizeRem: 0.92}
 }
-export const SIZE_OPTIONS: ReadonlyArray<{ id: SizeId, label: string }> = [
+export const SIZE_OPTIONS: ReadonlyArray<{id: SizeId, label: string}> = [
     {id: "compact", label: "Compact"},
     {id: "normal", label: "Normal"},
     {id: "large", label: "Large"}

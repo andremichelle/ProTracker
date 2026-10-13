@@ -32,6 +32,13 @@ component
     &:hover
       border-color: var(--color-gray)
 
+    &[aria-pressed="true"]
+      color: var(--color-black)
+      background-color: var(--color-green)
+      border-color: var(--color-green)
+      opacity: 1
+      cursor: default
+
   .url
     font: inherit
     color: var(--color-cream)
@@ -43,13 +50,6 @@ component
     &:focus
       border-color: var(--color-gray)
       outline: none
-
-    &[aria-pressed="true"]
-      color: var(--color-black)
-      background-color: var(--color-green)
-      border-color: var(--color-green)
-      opacity: 1
-      cursor: default
 
   .info
     margin-left: auto

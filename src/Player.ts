@@ -1,4 +1,4 @@
-import {DefaultObservableValue, MutableObservableOption, Nullable, Option, tryCatch} from "@opendaw/lib-std"
+import {DefaultObservableValue, isDefined, MutableObservableOption, Nullable, Option, tryCatch} from "@opendaw/lib-std"
 import {Module} from "@/Module"
 import type {Request, Response, Status} from "@/worklet/processor"
 import processorUrl from "@/worklet/processor?worker&url"
@@ -14,10 +14,8 @@ export class Player {
 
     private context: Option<AudioContext> = Option.None
     private node: Option<AudioWorkletNode> = Option.None
-    private analyser: AnalyserNode | null = null
+    private analyser: Option<AnalyserNode> = Option.None
     private status: Nullable<Status> = null
-    // Wall-clock elapsed playback time (DOS-tracker-style "time played" readout), independent
-    // of the worklet's own position/pattern state - just accumulated since Play was pressed.
     private playStartMs: Nullable<number> = null
     private accumulatedMs = 0
 
@@ -29,47 +27,26 @@ export class Player {
 
     get currentStatus(): Nullable<Status> {return this.status}
 
+    /** Wall-clock time played since the module was loaded. */
     get elapsedMs(): number {
-        return this.accumulatedMs + (this.playStartMs === null ? 0 : performance.now() - this.playStartMs)
+        return this.accumulatedMs + (isDefined(this.playStartMs) ? performance.now() - this.playStartMs : 0)
     }
 
-    getSpectrum(target: Uint8Array<ArrayBuffer>): boolean {
-        if (this.analyser === null) {
-            target.fill(0)
-            return false
-        }
-        this.analyser.getByteFrequencyData(target)
-        return true
+    getSpectrum(target: Uint8Array<ArrayBuffer>): void {
+        this.analyser.match({
+            none: () => {target.fill(0)},
+            some: analyser => analyser.getByteFrequencyData(target)
+        })
     }
 
     async listModules(): Promise<ReadonlyArray<string>> {
         return (await fetch(`${this.baseUrl}mods/index.json`)).json()
     }
 
-    async loadUrl(path: string): Promise<void> {
-        const response = await fetch(`${this.baseUrl}${path}`)
-        if (!response.ok) {
-            this.error.setValue(`${path}: ${response.status}`)
-            return
-        }
-        this.load(new Uint8Array(await response.arrayBuffer()))
-    }
+    async loadUrl(path: string): Promise<void> {return this.fetchModule(`${this.baseUrl}${path}`, path)}
 
-    /** Fetches an arbitrary, absolute URL (as opposed to loadUrl, which is for the app's own bundled assets). */
-    async loadFromUrl(url: string): Promise<void> {
-        let response: globalThis.Response
-        try {
-            response = await fetch(url)
-        } catch (reason) {
-            this.error.setValue(`${url}: ${String(reason)}`)
-            return
-        }
-        if (!response.ok) {
-            this.error.setValue(`${url}: ${response.status}`)
-            return
-        }
-        this.load(new Uint8Array(await response.arrayBuffer()))
-    }
+    /** Loads from any absolute url, the host must allow CORS. */
+    async loadFromUrl(url: string): Promise<void> {return this.fetchModule(url, url)}
 
     load(bytes: Uint8Array): void {
         const result = tryCatch(() => Module.parse(bytes))
@@ -97,9 +74,22 @@ export class Player {
     stop(): void {
         this.send({type: "stop"})
         this.playing.setValue(false)
-        if (this.playStartMs !== null) {
+        if (isDefined(this.playStartMs)) {
             this.accumulatedMs += performance.now() - this.playStartMs
             this.playStartMs = null
+        }
+    }
+
+    private async fetchModule(url: string, label: string): Promise<void> {
+        try {
+            const response = await fetch(url)
+            if (!response.ok) {
+                this.error.setValue(`${label}: ${response.status}`)
+                return
+            }
+            this.load(new Uint8Array(await response.arrayBuffer()))
+        } catch (reason) {
+            this.error.setValue(`${label}: ${String(reason)}`)
         }
     }
 
@@ -122,7 +112,7 @@ export class Player {
         node.connect(analyser)
         analyser.connect(context.destination)
         this.node = Option.wrap(node)
-        this.analyser = analyser
+        this.analyser = Option.wrap(analyser)
         this.send({
             type: "init",
             wasm: new Uint8Array(wasm),
