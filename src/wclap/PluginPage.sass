@@ -1,0 +1,71 @@
+component
+  height: 100vh
+  display: grid
+  grid-template-rows: auto minmax(0, 1fr) auto auto
+  gap: 0.5rem
+  padding: 0.5rem
+  overflow: hidden
+
+  header
+    display: flex
+    align-items: center
+    gap: 0.75rem
+    font-size: 0.75rem
+
+    .title
+      color: var(--color-cream)
+
+    .state
+      color: var(--color-dark)
+
+    .error
+      flex: 1
+      color: var(--color-red)
+
+    button
+      font: inherit
+      color: var(--color-bright)
+      background-color: var(--color-panel-background)
+      border: 1px solid var(--color-panel-background-bright)
+      border-radius: 3px
+      padding: 0.125rem 0.5rem
+      cursor: pointer
+
+      &:disabled
+        color: var(--color-dark)
+        cursor: default
+
+    .collection
+      position: relative
+
+    .menu
+      position: absolute
+      right: 0
+      top: calc(100% + 0.25rem)
+      z-index: 1
+      max-height: 60vh
+      overflow-y: auto
+      min-width: 16em
+      padding: 0.25rem 0
+      background-color: var(--color-panel-background)
+      border: 1px solid var(--color-panel-background-bright)
+      border-radius: 3px
+
+      &[hidden]
+        display: none
+
+      .item
+        padding: 0.125rem 0.75rem
+        white-space: nowrap
+        cursor: pointer
+
+        &:hover
+          color: var(--color-black)
+          background-color: var(--color-cream)
+
+  main
+    container-type: inline-size
+    display: grid
+    grid-template-columns: auto 1fr
+    gap: 0.5rem
+    min-height: 0

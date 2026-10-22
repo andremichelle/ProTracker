@@ -1,0 +1,78 @@
+component
+  display: grid
+  grid-template-columns: repeat(5, 1fr)
+  gap: 0.5rem
+  font-size: 0.75rem
+
+  .strip
+    display: flex
+    flex-direction: column
+    gap: 0.375rem
+    padding: 0.375rem 0.625rem
+    background-color: var(--color-panel-background)
+    border: 1px solid var(--color-panel-background-bright)
+    border-radius: 4px
+
+  .head
+    display: flex
+    align-items: center
+    gap: 0.375rem
+    color: var(--color-dark)
+
+    > span
+      flex: 1
+
+  .switch
+    font: inherit
+    padding: 0 0.375rem
+    color: var(--color-dark)
+    background: none
+    border: 1px solid var(--color-panel-background-bright)
+    border-radius: 3px
+    cursor: pointer
+
+    &.on
+      color: var(--color-black)
+      background-color: var(--color-cream)
+      border-color: var(--color-cream)
+
+  .fader
+    display: grid
+    grid-template-columns: 2.25em 1fr 3em
+    font-size: 0.6875rem
+    align-items: center
+    gap: 0.375rem
+
+    .name
+      color: var(--color-dark)
+
+    .value
+      color: var(--color-cream)
+      text-align: right
+
+    .track
+      position: relative
+      margin: 0 0.25rem
+      height: 0.75rem
+      min-width: 0
+      cursor: pointer
+      touch-action: none
+
+      &::before
+        content: ""
+        position: absolute
+        left: 0
+        right: 0
+        top: calc(50% - 1px)
+        height: 2px
+        border-radius: 1px
+        background-color: var(--color-panel-background-bright)
+
+      i
+        position: absolute
+        top: calc(50% - 0.25rem)
+        width: 0.5rem
+        height: 0.5rem
+        margin-left: -0.25rem
+        border-radius: 50%
+        background-color: var(--color-cream)

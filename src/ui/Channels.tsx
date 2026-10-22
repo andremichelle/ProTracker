@@ -2,14 +2,14 @@ import css from "./Channels.sass?inline"
 import {Arrays, isDefined, Lifecycle} from "@opendaw/lib-std"
 import {createElement, Inject} from "@opendaw/lib-jsx"
 import {AnimationFrame, Html} from "@opendaw/lib-dom"
-import {Player} from "@/Player"
+import {Replayer} from "@/Replayer"
 import {noteName} from "@/Module"
 
 const className = Html.adoptStyleSheet(css, "Channels")
 
 type Construct = {
     lifecycle: Lifecycle
-    player: Player
+    player: Replayer
 }
 
 /** Paula's four channels: period as a note, volume as a bar. */

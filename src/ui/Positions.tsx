@@ -2,13 +2,13 @@ import css from "./Positions.sass?inline"
 import {int, isDefined, Lifecycle} from "@opendaw/lib-std"
 import {createElement, replaceChildren} from "@opendaw/lib-jsx"
 import {AnimationFrame, Html} from "@opendaw/lib-dom"
-import {Player} from "@/Player"
+import {Replayer} from "@/Replayer"
 
 const className = Html.adoptStyleSheet(css, "Positions")
 
 type Construct = {
     lifecycle: Lifecycle
-    player: Player
+    player: Replayer
 }
 
 /** The song's position list: which pattern plays at which position. */

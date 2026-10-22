@@ -2,7 +2,7 @@ import css from "./PatternView.sass?inline"
 import {int, isDefined, Lifecycle} from "@opendaw/lib-std"
 import {createElement, Inject, replaceChildren} from "@opendaw/lib-jsx"
 import {AnimationFrame, Html} from "@opendaw/lib-dom"
-import {Player} from "@/Player"
+import {Replayer} from "@/Replayer"
 import {cellText, Pattern} from "@/Module"
 
 const className = Html.adoptStyleSheet(css, "PatternView")
@@ -10,7 +10,7 @@ const ROW_HEIGHT_EM = 1.5   // keep in sync with --row-height in PatternView.sas
 
 type Construct = {
     lifecycle: Lifecycle
-    player: Player
+    player: Replayer
 }
 
 /** The step table: the current pattern's 64 rows, scrolled so the playing row stays in view and the table stays full. */
