@@ -154,12 +154,12 @@ static const clap_plugin_descriptor_t descriptor = {
     .clap_version = CLAP_VERSION_INIT,
     .id = "studio.opendaw.protracker",
     .name = "ProTracker",
-    .vendor = "openDAW",
+    .vendor = "André Michelle",
     .url = "https://github.com/andremichelle/ProTracker",
     .manual_url = "",
     .support_url = "",
     .version = "0.0.1",
-    .description = "The ProTracker 2.3A playroutine on an emulated Amiga",
+    .description = "Peter \"Crayon\" Hanning's ProTracker 2.3A playroutine on an emulated Amiga",
     .features = features
 };
 
