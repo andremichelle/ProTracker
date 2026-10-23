@@ -5,7 +5,7 @@ set -euo pipefail
 cd "$(dirname "$0")"
 WORK="$(mktemp -d)"
 trap 'rm -rf "$WORK"' EXIT
-EXAMPLES="8bit_castle.mod jam_-_highway_encounter.mod jam_-_heatwave_cruise.mod kc-dancinonamiga.mod"
+EXAMPLES="jam_-_heatwave_cruise.mod 8bit_castle.mod jam_-_highway_encounter.mod kc-dancinonamiga.mod"
 # the playroutine and the first example compiled in as C arrays
 node -e '
 const fs = require("fs")

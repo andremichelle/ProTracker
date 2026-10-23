@@ -51,7 +51,7 @@ extern int ust_paula_rebuild(uint32_t count, double paula_clocks_per_beat, doubl
 #define NOMINAL_BPM 125.0
 #define JUMP_TOLERANCE_BEATS 1.0e-3
 #define STATE_MAGIC 0x43575450u // "PTWC"
-#define STATE_VERSION 1u
+#define STATE_VERSION 2u
 #define STATE_MAX_BYTES (4u << 20)
 #define MODULE_MAX_BYTES 0x170000u
 #define OUT_EVENTS 256
@@ -865,7 +865,8 @@ static const clap_plugin_params_t params = {
     .flush = params_flush
 };
 
-// state: magic, version, param count, the params as doubles, module length, module bytes, all little endian
+// state: magic, version, param count, the params as doubles, then the module, all little endian. Version 1 stores the
+// module as its file (length, bytes), version 2 below.
 static bool write_all(const clap_ostream_t *stream, const void *data, uint64_t size) {
     const uint8_t *bytes = (const uint8_t *) data;
     while (size > 0) {
@@ -877,12 +878,39 @@ static bool write_all(const clap_ostream_t *stream, const void *data, uint64_t s
     return true;
 }
 
+// Version 2 stores the module with room for every pattern before the samples, the layout the machine runs it in:
+// slot count, stored length, then header, the patterns padded to the slots, the samples. A new or changed pattern
+// then changes the saved state only where it is, which keeps a host's diff of two states small.
 static bool state_save(const clap_plugin_t *plugin, const clap_ostream_t *stream) {
     const Tracker *tracker = (const Tracker *) plugin->plugin_data;
     const uint32_t header[3] = {STATE_MAGIC, STATE_VERSION, PARAM_COUNT};
-    return write_all(stream, header, sizeof(header)) && write_all(stream, tracker->values, sizeof(tracker->values))
-        && write_all(stream, &tracker->module_len, sizeof(tracker->module_len))
-        && write_all(stream, tracker->module, tracker->module_len);
+    const uint32_t count = (uint32_t) pattern_count(tracker->module + 952);
+    const uint32_t slots = (uint32_t) pattern_slots(tracker->module) > count ? (uint32_t) pattern_slots(tracker->module) : count;
+    const uint32_t patterns_end = tracker->module_len < 1084u + count * 1024u ? tracker->module_len : 1084u + count * 1024u;
+    const uint32_t stored = 1084u + slots * 1024u + (tracker->module_len - patterns_end);
+    static const uint8_t zeros[1024];
+    if (!write_all(stream, header, sizeof(header)) || !write_all(stream, tracker->values, sizeof(tracker->values))
+        || !write_all(stream, &slots, sizeof(slots)) || !write_all(stream, &stored, sizeof(stored))
+        || !write_all(stream, tracker->module, patterns_end)) {return false;}
+    for (uint32_t at = patterns_end; at < 1084u + slots * 1024u; at += 1024u) {
+        const uint32_t gap = 1084u + slots * 1024u - at;
+        if (!write_all(stream, zeros, gap < 1024u ? gap : 1024u)) {return false;}
+    }
+    return write_all(stream, tracker->module + patterns_end, tracker->module_len - patterns_end);
+}
+
+// the module of a version 2 state: its patterns without the empty room behind them, then the samples
+static uint8_t *module_of_slots(const uint8_t *stored, uint32_t stored_len, uint32_t slots, uint32_t *module_len) {
+    if (stored_len < 1084u || slots > 100u || 1084u + slots * 1024u > stored_len) {return NULL;}
+    const uint32_t count = (uint32_t) pattern_count(stored + 952);
+    if (count > slots) {return NULL;}
+    const uint32_t samples = stored_len - 1084u - slots * 1024u;
+    *module_len = 1084u + count * 1024u + samples;
+    uint8_t *module = (uint8_t *) malloc(*module_len);
+    if (module == NULL) {return NULL;}
+    memcpy(module, stored, 1084u + count * 1024u);
+    memcpy(module + 1084u + count * 1024u, stored + 1084u + slots * 1024u, samples);
+    return module;
 }
 
 static bool state_load(const clap_plugin_t *plugin, const clap_istream_t *stream) {
@@ -903,17 +931,28 @@ static bool state_load(const clap_plugin_t *plugin, const clap_istream_t *stream
         if (read == 0) {break;}
         size += (uint32_t) read;
     }
-    uint32_t header[3];
+    uint32_t header[3] = {0, 0, 0};
     const uint32_t params_end = sizeof(header) + PARAM_COUNT * sizeof(double);
-    uint32_t module_len = 0;
     if (size >= sizeof(header)) {memcpy(header, data, sizeof(header));}
-    const bool valid = size >= params_end + sizeof(uint32_t) && header[0] == STATE_MAGIC && header[1] == STATE_VERSION
-        && header[2] == PARAM_COUNT;
-    if (valid) {memcpy(&module_len, data + params_end, sizeof(module_len));}
-    if (!valid || module_len < 1084 || size - params_end - sizeof(uint32_t) < module_len) {free(data); return false;}
-    uint8_t *module = (uint8_t *) malloc(module_len);
+    const bool valid = size >= params_end + 2 * sizeof(uint32_t) && header[0] == STATE_MAGIC
+        && (header[1] == 1u || header[1] == 2u) && header[2] == PARAM_COUNT;
+    uint32_t module_len = 0;
+    uint8_t *module = NULL;
+    if (valid && header[1] == 1u) {
+        memcpy(&module_len, data + params_end, sizeof(module_len));
+        if (module_len >= 1084 && size - params_end - sizeof(uint32_t) >= module_len) {
+            module = (uint8_t *) malloc(module_len);
+            if (module != NULL) {memcpy(module, data + params_end + sizeof(uint32_t), module_len);}
+        }
+    } else if (valid) {
+        uint32_t slots = 0, stored_len = 0;
+        memcpy(&slots, data + params_end, sizeof(slots));
+        memcpy(&stored_len, data + params_end + sizeof(slots), sizeof(stored_len));
+        if (size - params_end - 2 * sizeof(uint32_t) >= stored_len) {
+            module = module_of_slots(data + params_end + 2 * sizeof(uint32_t), stored_len, slots, &module_len);
+        }
+    }
     if (module == NULL) {free(data); return false;}
-    memcpy(module, data + params_end + sizeof(uint32_t), module_len);
     double values[PARAM_COUNT];
     memcpy(values, data + sizeof(header), sizeof(values));
     free(data);

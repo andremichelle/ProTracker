@@ -270,6 +270,52 @@ static int sample_replace(Plugin *p) {return set_sample(p, 1, 4000, 1000, 3000);
 static int sample_clear(Plugin *p) {return set_sample(p, 11, 0, 0, 2);}
 static int sample_grow(Plugin *p) {return set_sample(p, 4, 20000, 0, 2);}
 
+typedef struct {uint8_t *bytes; size_t size, capacity, read;} Stream;
+
+static int64_t stream_write(const clap_ostream_t *stream, const void *buffer, uint64_t size) {
+    Stream *target = stream->ctx;
+    if (target->size + size > target->capacity) {
+        target->capacity = (target->size + size) * 2;
+        target->bytes = realloc(target->bytes, target->capacity);
+    }
+    memcpy(target->bytes + target->size, buffer, size);
+    target->size += size;
+    return (int64_t) size;
+}
+
+static int64_t stream_read(const clap_istream_t *stream, void *buffer, uint64_t size) {
+    Stream *source = stream->ctx;
+    const size_t left = source->size - source->read;
+    const size_t count = size < left ? size : left;
+    memcpy(buffer, source->bytes + source->read, count);
+    source->read += count;
+    return (int64_t) count;
+}
+
+static Stream save_state(Plugin *p) {
+    Stream stream = {NULL, 0, 0, 0};
+    const clap_ostream_t out = {.ctx = &stream, .write = stream_write};
+    const clap_plugin_state_t *state = p->plugin->get_extension(p->plugin, CLAP_EXT_STATE);
+    if (!state->save(p->plugin, &out)) {fprintf(stderr, "save failed\n"); exit(1);}
+    return stream;
+}
+
+static int load_state(Plugin *p, const uint8_t *bytes, size_t size) {
+    Stream stream = {(uint8_t *) bytes, size, size, 0};
+    const clap_istream_t in = {.ctx = &stream, .read = stream_read};
+    const clap_plugin_state_t *state = p->plugin->get_extension(p->plugin, CLAP_EXT_STATE);
+    return state->load(p->plugin, &in);
+}
+
+// the bytes a host's diff of two states would have to send: the span between their common prefix and suffix
+static size_t changed_span(const Stream *a, const Stream *b) {
+    const size_t shorter = a->size < b->size ? a->size : b->size;
+    size_t prefix = 0, suffix = 0;
+    while (prefix < shorter && a->bytes[prefix] == b->bytes[prefix]) {prefix++;}
+    while (suffix < shorter - prefix && a->bytes[a->size - 1 - suffix] == b->bytes[b->size - 1 - suffix]) {suffix++;}
+    return b->size - prefix - suffix;
+}
+
 static int edit_none(Plugin *p) {return set_pattern(p, 1, 0);}
 static int edit_set(Plugin *p) {return set_pattern(p, 1, 4);}
 static int edit_set_new(Plugin *p) {return set_pattern(p, 3, 9);}
@@ -356,6 +402,77 @@ int main(int argc, char **argv) {
     expect(memcmp(edited + edited_len - 6308, module + len - 6308, 6308) == 0, "the samples behind it are kept");
     free(edited);
     expect(!set_sample(&p, 1, 3, 0, 2), "an odd length is refused");
+    close_plugin(&p);
+
+    p = open_plugin(module, len);
+    Stream before = save_state(&p);
+    expect(before.size > len, "a state holds the module with room for its patterns");
+    struct {const char *what; int (*edit)(Plugin *); size_t limit;} small[] = {
+        {"setting a position's pattern changes the state only in its table", edit_set, 200},
+        {"a new pattern changes the state only in its table", edit_set_new, 200},
+        {"inserting a pattern changes the state only in its table", edit_insert, 200},
+        {"a step changes four bytes of the state", cell_note, 8},
+        {"a sample's volume and loop change its header in the state", header_pattern_2, 40}
+    };
+    for (size_t index = 0; index < sizeof(small) / sizeof(small[0]); index++) {
+        expect(small[index].edit(&p), "the plugin takes the edit");
+        process(&p, 0, NULL, NULL);
+        Stream after = save_state(&p);
+        char what[200];
+        snprintf(what, sizeof(what), "%s (%zu bytes)", small[index].what, changed_span(&before, &after));
+        expect(changed_span(&before, &after) <= small[index].limit, what);
+        free(before.bytes);
+        before = after;
+    }
+    uint32_t page_len;
+    uint8_t *page = fetch_module(&p, &page_len);
+    close_plugin(&p);
+    p = open_plugin(module, len);
+    expect(load_state(&p, before.bytes, before.size), "a version 2 state loads");
+    process(&p, 0, NULL, NULL);
+    uint32_t loaded_len;
+    uint8_t *loaded = fetch_module(&p, &loaded_len);
+    expect(loaded_len == page_len && memcmp(loaded, page, page_len) == 0, "and gives back the module it was saved from");
+    free(loaded);
+    Stream again = save_state(&p);
+    expect(again.size == before.size && memcmp(again.bytes, before.bytes, before.size) == 0, "saving it again gives the same state");
+    free(again.bytes);
+    // version 1: magic, 1, param count, params, module length, module
+    const size_t params_end = 12 + 15 * 8;
+    uint8_t *v1 = calloc(params_end + 4 + page_len, 1);
+    memcpy(v1, before.bytes, params_end);
+    v1[4] = 1; v1[5] = 0; v1[6] = 0; v1[7] = 0;
+    memcpy(v1 + params_end, &page_len, 4);
+    memcpy(v1 + params_end + 4, page, page_len);
+    expect(load_state(&p, v1, params_end + 4 + page_len), "a version 1 state still loads");
+    process(&p, 0, NULL, NULL);
+    loaded = fetch_module(&p, &loaded_len);
+    expect(loaded_len == page_len && memcmp(loaded, page, page_len) == 0, "with its module");
+    free(loaded);
+    uint8_t *broken = malloc(before.size);
+    memcpy(broken, before.bytes, before.size);
+    broken[0] ^= 1;
+    expect(!load_state(&p, broken, before.size), "a wrong magic is refused");
+    memcpy(broken, before.bytes, before.size);
+    broken[4] = 3;
+    expect(!load_state(&p, broken, before.size), "an unknown version is refused");
+    memcpy(broken, before.bytes, before.size);
+    const uint32_t too_many = 101;
+    memcpy(broken + params_end, &too_many, 4);
+    expect(!load_state(&p, broken, before.size), "more than 100 pattern slots are refused");
+    memcpy(broken, before.bytes, before.size);
+    const uint32_t too_long = (uint32_t) before.size;
+    memcpy(broken + params_end + 4, &too_long, 4);
+    expect(!load_state(&p, broken, before.size), "a stored length past the state is refused");
+    expect(!load_state(&p, before.bytes, before.size / 2), "a cut state is refused");
+    expect(!load_state(&p, before.bytes, 10), "a state shorter than its header is refused");
+    loaded = fetch_module(&p, &loaded_len);
+    expect(loaded_len == page_len && memcmp(loaded, page, page_len) == 0, "a refused state leaves the module as it was");
+    free(loaded);
+    free(broken);
+    free(v1);
+    free(page);
+    free(before.bytes);
     close_plugin(&p);
 
     printf(failures == 0 ? "all passed\n" : "%d failed\n", failures);

@@ -6,7 +6,7 @@ set -euo pipefail
 cd "$(dirname "$0")"
 OUT="${OUT:-out}"
 # the examples the page offers, the first one is compiled in as the module a new plugin plays
-EXAMPLES="8bit_castle.mod jam_-_highway_encounter.mod jam_-_heatwave_cruise.mod kc-dancinonamiga.mod"
+EXAMPLES="jam_-_heatwave_cruise.mod 8bit_castle.mod jam_-_highway_encounter.mod kc-dancinonamiga.mod"
 mkdir -p "$OUT" gen
 {
   echo "#include <stdint.h>"
