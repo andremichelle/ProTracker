@@ -1,0 +1,15 @@
+{
+  "name": "protracker-wclap-page",
+  "private": true,
+  "type": "module",
+  "dependencies": {
+    "@opendaw/lib-dom": "0.0.91",
+    "@opendaw/lib-jsx": "0.0.93",
+    "@opendaw/lib-std": "0.0.86",
+    "@opendaw/studio-enums": "0.1.4"
+  },
+  "devDependencies": {
+    "sass": "1.105.1",
+    "vite": "8.3.3"
+  }
+}

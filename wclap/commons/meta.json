@@ -1,0 +1,8 @@
+{
+  "name": "ProTracker",
+  "description": "The original ProTracker 2.3A playroutine on an emulated Amiga, locked to the project tempo and position. A mixer pans each channel, the window edits the position list, the steps of a pattern and the samples with their loops.",
+  "author": {"name": "André Michelle", "github": "andremichelle"},
+  "tags": ["tracker", "amiga", "sampler"],
+  "license": "MIT",
+  "credits": "ProTracker 2.3A playroutine by Peter \"Crayon\" Hanning / Mushroom Studios, 1992, public domain. Musashi 68000 emulator by Karl Stenerud (MIT). CLAP headers by free-audio (MIT). Example modules CC0."
+}
