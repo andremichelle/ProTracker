@@ -1,6 +1,7 @@
 // ProTracker as a CLAP instrument: the emulator in emu/ust.c behind a stereo output, locked to the host's musical
-// time. A row is a 1/16 note and the speed splits it into ticks, so the song follows any tempo and any jump.
-// A mixer pans each Paula channel. The state carries the params and the module, a test module is the default. The
+// time. Four rows are a beat, its ticks spread evenly over it, so the song follows any tempo and any jump and a shuffle
+// (alternating speeds) keeps its swing.
+// A mixer pans each Paula channel. The state carries the params and the module, the first example is the default. The
 // page (clap.webview) shows the song and the mixer, it polls the replayer state and loads modules.
 
 #include <clap/clap.h>
@@ -23,8 +24,9 @@ extern void ust_set_declick(int on);
 extern void ust_set_mix(int c, float left, float right, int ramp);
 extern void ust_set_external_clock(int on);
 extern void ust_tick(void);
-extern double ust_skip_ticks(int ticks, double paula_clocks_per_beat, double last);
+extern double ust_skip_ticks(int ticks, double paula_clocks_per_tick, double last);
 extern double ust_paula_clocks_per_beat(double bpm);
+extern void ust_paula_advance(double clocks);
 extern int ust_tick_speed(void);
 extern uint32_t ust_snapshot_size(void);
 extern void ust_snapshot_save(uint8_t *target);
@@ -35,10 +37,11 @@ extern int ust_pattern(void);
 extern int ust_chan_period(int c);
 extern int ust_chan_volume(int c);
 extern int ust_chan_dma(int c);
+extern float ust_chan_peak(int c);
 extern int ust_row(void);
 extern void ust_log(int on);
 extern uint32_t ust_log_ticks(void);
-extern int ust_paula_rebuild(uint32_t count, double paula_clocks_per_beat, double last);
+extern int ust_paula_rebuild(uint32_t count, double paula_clocks_per_beat, double last, const double *beats);
 
 #define ROWS_PER_BEAT 4.0
 #define SNAPSHOT_TICKS 128
@@ -59,7 +62,7 @@ extern int ust_paula_rebuild(uint32_t count, double paula_clocks_per_beat, doubl
 enum {PAGE_POLL = 1, PAGE_MODULE_REQUEST = 2, PAGE_LOAD = 3, PAGE_PARAM_BEGIN = 4, PAGE_PARAM_SET = 5, PAGE_PARAM_END = 6};
 // plugin -> page
 enum {PLUGIN_STATUS = 1, PLUGIN_MODULE = 2};
-#define STATUS_BYTES (28 + PARAM_COUNT * 8)
+#define STATUS_BYTES (32 + PARAM_COUNT * 8)
 
 // ids are indices into Params
 enum {PARAM_PAN = 0, PARAM_VOLUME = 4, PARAM_MUTE = 8, PARAM_SEPARATION = 12, PARAM_FILTER = 13, PARAM_DECLICK = 14, PARAM_COUNT = 15};
@@ -87,7 +90,7 @@ void emscripten_notify_memory_growth(size_t index) {(void) index;}
 typedef struct {uint16_t type; clap_id id; double value;} OutEvent;
 
 // what the page shows, taken at the end of every block
-typedef struct {uint8_t playing, pos, pattern, row, speed, song_len; uint16_t period[4]; uint8_t volume[4], dma[4];} Display;
+typedef struct {uint8_t playing, pos, pattern, row, speed, song_len; uint16_t period[4]; uint8_t volume[4], dma[4]; float peak[4];} Display;
 
 typedef struct {
     clap_plugin_t plugin;
@@ -98,10 +101,14 @@ typedef struct {
     uint8_t *snapshots;      // the machine before tick k * SNAPSHOT_TICKS
     uint32_t snapshot_size;
     uint32_t snapshot_count;
-    double *tick_beats;      // the beat tick k fires at, for every tick of the snapshot pass and the one after
+    double *times;           // the beat tick k fires at, for every tick of the snapshot pass and the one after
     uint32_t tick_count;     // ticks in the snapshot pass
     int64_t next_tick;       // the next tick to fire
     double next_beat;        // the beat it fires at
+    double beat_start;       // past the snapshot pass: the beat being played, measured ahead when it starts
+    int64_t beat_start_tick;
+    int64_t beat_ticks;
+    uint8_t *fork;           // a snapshot to measure the next beat with
     double expected_beats;   // where the next block starts if the transport does not jump
     double values[PARAM_COUNT];
     int mix_dirty;
@@ -151,96 +158,145 @@ static void tracker_destroy(const clap_plugin_t *plugin) {
     Tracker *tracker = (Tracker *) plugin->plugin_data;
     instances--;
     free(tracker->snapshots);
-    free(tracker->tick_beats);
+    free(tracker->times);
+    free(tracker->fork);
     free(tracker->module);
     free(tracker->pending_module);
     free(tracker);
 }
 
-// how long the tick just fired lasts, the speed it left behind splitting a row
-static double tick_beats(void) {return 1.0 / (ROWS_PER_BEAT * ust_tick_speed());}
+// the length of the tick just fired in rows of a quarter beat, by the speed it left behind
+static double tick_slots(void) {return 1.0 / (ROWS_PER_BEAT * ust_tick_speed());}
 
-// One silent pass through the song, a snapshot every SNAPSHOT_TICKS, until a backward position jump (the song wraps or
-// loops with Bxx) or the cap.
+// Every tick of a beat (four rows, pattern delays count) fires at an even share of it, so a shuffle keeps its swing.
+// `slots` holds the row times, the last group stays as it is if the pass ended inside it.
+static void spread_beats(double *slots, uint32_t count) {
+    uint32_t first = 0;
+    while (first < count) {
+        const double beat = floor(slots[first] + 1.0e-9);
+        uint32_t end = first;
+        while (end < count && slots[end] < beat + 1.0 - 1.0e-9) {end++;}
+        if (slots[end] < beat + 1.0 - 1.0e-9) {break;}
+        for (uint32_t index = first; index < end; index++) {slots[index] = beat + (double) (index - first) / (double) (end - first);}
+        first = end;
+    }
+}
+
+// Ticks in the beat starting now, counted on a fork of the machine that is thrown away.
+static int64_t measure_beat(Tracker *tracker) {
+    ust_snapshot_save(tracker->fork);
+    double slots = 0.0;
+    int64_t ticks = 0;
+    while (slots < 1.0 - 1.0e-9 && ticks < 1024) {
+        ust_skip_ticks(1, 0.0, 1.0);
+        slots += tick_slots();
+        ticks++;
+    }
+    ust_snapshot_load(tracker->fork);
+    return ticks;
+}
+
+// the beat `next_tick` fires at: from the pass, past it measured beat by beat
+static void schedule(Tracker *tracker) {
+    if (tracker->next_tick < tracker->tick_count) {
+        tracker->next_beat = tracker->times[tracker->next_tick];
+        return;
+    }
+    if (tracker->next_tick == tracker->tick_count) {
+        tracker->beat_start = tracker->times[tracker->tick_count];
+        tracker->beat_start_tick = tracker->next_tick;
+        tracker->beat_ticks = measure_beat(tracker);
+    } else if (tracker->next_tick - tracker->beat_start_tick >= tracker->beat_ticks) {
+        tracker->beat_start += 1.0;
+        tracker->beat_start_tick = tracker->next_tick;
+        tracker->beat_ticks = measure_beat(tracker);
+    }
+    tracker->next_beat = tracker->beat_start
+        + (double) (tracker->next_tick - tracker->beat_start_tick) / (double) tracker->beat_ticks;
+}
+
+// One silent pass through the song, a snapshot every SNAPSHOT_TICKS, until the beat in which a backward position jump
+// (the song wraps or loops with Bxx) happened is complete, or the cap.
 static int build_snapshots(Tracker *tracker) {
     free(tracker->snapshots);
-    free(tracker->tick_beats);
+    free(tracker->times);
+    free(tracker->fork);
     tracker->snapshots = NULL;
-    tracker->tick_beats = NULL;
+    tracker->times = NULL;
     tracker->snapshot_count = 0;
     tracker->tick_count = 0;
     tracker->snapshot_size = ust_snapshot_size();
-    const double clocks = ust_paula_clocks_per_beat(NOMINAL_BPM);
+    tracker->fork = (uint8_t *) malloc(tracker->snapshot_size);
+    if (tracker->fork == NULL) {return 0;}
     uint32_t capacity = 0;
-    int last_pos = 0;
-    double beat = 0.0;
+    int last_pos = 0, ended = 0;
+    double slots = 0.0;
     // mt_init leaves the routine speed - 1 ticks before row 0: run them silently, so row 0 plays at beat 0
     const int initial = ust_song_pos() * 64 + ust_row();
-    uint8_t *start = (uint8_t *) malloc(tracker->snapshot_size);
-    if (start == NULL) {return 0;}
-    ust_snapshot_save(start);
+    ust_snapshot_save(tracker->fork);
     int lead = 0;
     while (lead < 256) {
-        ust_skip_ticks(1, clocks, 1.0);
+        ust_skip_ticks(1, 0.0, 1.0);
         if (ust_song_pos() * 64 + ust_row() != initial) {break;}
         lead++;
     }
-    ust_snapshot_load(start);
-    free(start);
-    if (lead > 0 && lead < 256) {ust_skip_ticks(lead, clocks, 1.0);}
+    ust_snapshot_load(tracker->fork);
+    if (lead > 0 && lead < 256) {ust_skip_ticks(lead, 0.0, 1.0);}
     ust_log(1);
     for (int64_t tick = 0; tick < MAX_SNAPSHOT_TICKS; tick++) {
+        if (ended && fabs(slots - round(slots)) < 1.0e-9) {break;}
         if (tick % SNAPSHOT_TICKS == 0) {
             if (tracker->snapshot_count == capacity) {
                 capacity = capacity == 0 ? 64 : capacity * 2;
                 uint8_t *grown = (uint8_t *) realloc(tracker->snapshots, (size_t) capacity * tracker->snapshot_size);
-                double *beats = (double *) realloc(tracker->tick_beats, ((size_t) capacity * SNAPSHOT_TICKS + 1) * sizeof(double));
+                double *times = (double *) realloc(tracker->times, ((size_t) capacity * SNAPSHOT_TICKS + 1) * sizeof(double));
                 if (grown != NULL) {tracker->snapshots = grown;}
-                if (beats != NULL) {tracker->tick_beats = beats;}
-                if (grown == NULL || beats == NULL) {break;}
+                if (times != NULL) {tracker->times = times;}
+                if (grown == NULL || times == NULL) {break;}
             }
             ust_snapshot_save(tracker->snapshots + (size_t) tracker->snapshot_count++ * tracker->snapshot_size);
         }
-        tracker->tick_beats[tick] = beat;
-        ust_skip_ticks(1, clocks, 1.0);
-        beat += tick_beats();
+        tracker->times[tick] = slots;
+        ust_skip_ticks(1, 0.0, 1.0);
+        slots += tick_slots();
         tracker->tick_count = (uint32_t) tick + 1;
         const int pos = ust_song_pos();
-        if (pos < last_pos) {break;}
+        if (pos < last_pos) {ended = 1;}
         last_pos = pos;
     }
     ust_log(0);
     if (tracker->snapshot_count == 0) {return 0;}
-    tracker->tick_beats[tracker->tick_count] = beat;
+    tracker->times[tracker->tick_count] = slots;
+    spread_beats(tracker->times, tracker->tick_count);
     ust_snapshot_load(tracker->snapshots);
     return 1;
 }
 
 // The machine as it is at `beats`: every tick before it fired, Paula moved on to it.
 static void seek(Tracker *tracker, double beats, double bpm) {
-    const double *ticks = tracker->tick_beats;
+    const double *times = tracker->times;
     const uint32_t last = tracker->tick_count;
     const double clocks = ust_paula_clocks_per_beat(bpm);
     const double target = beats - 1.0e-9;
-    if (target > ticks[last]) {
-        // past the snapshot pass: replay tick by tick from the last snapshot
+    if (target > times[last]) {
+        // past the snapshot pass: replay tick by tick from the last snapshot, Paula moved on by each tick's length
         const uint32_t index = tracker->snapshot_count - 1;
         ust_snapshot_load(tracker->snapshots + (size_t) index * tracker->snapshot_size);
-        int64_t tick = (int64_t) index * SNAPSHOT_TICKS;
-        double beat = ticks[tick];
-        while (beat < target) {
-            ust_skip_ticks(1, clocks, 1.0);
-            beat += tick_beats();
-            tick++;
+        tracker->next_tick = (int64_t) index * SNAPSHOT_TICKS;
+        schedule(tracker);
+        while (tracker->next_beat < target) {
+            const double from = tracker->next_beat;
+            ust_skip_ticks(1, 0.0, 1.0);
+            tracker->next_tick++;
+            schedule(tracker);
+            ust_paula_advance(clocks * (fmin(tracker->next_beat, beats) - from));
         }
-        tracker->next_tick = tick;
-        tracker->next_beat = beat;
         return;
     }
     uint32_t low = 0, high = last;
     while (low < high) {
         const uint32_t middle = (low + high) / 2;
-        if (ticks[middle] < target) {low = middle + 1;} else {high = middle;}
+        if (times[middle] < target) {low = middle + 1;} else {high = middle;}
     }
     const uint32_t count = low;
     uint32_t index = count / SNAPSHOT_TICKS;
@@ -248,11 +304,11 @@ static void seek(Tracker *tracker, double beats, double bpm) {
     ust_snapshot_load(tracker->snapshots + (size_t) index * tracker->snapshot_size);
     const int64_t replay = (int64_t) count - (int64_t) index * SNAPSHOT_TICKS;
     const double rest = count == 0 ? 0.0
-        : fmin(1.0, fmax(0.0, (beats - ticks[count - 1]) / (ticks[count] - ticks[count - 1])));
-    if (replay > 0) {ust_skip_ticks((int) replay, clocks, rest);}
-    if (count > 0 && count <= ust_log_ticks()) {ust_paula_rebuild(count, clocks, rest);}
+        : fmin(1.0, fmax(0.0, (beats - times[count - 1]) / (times[count] - times[count - 1])));
+    if (replay > 0) {ust_skip_ticks((int) replay, 0.0, 1.0);}
+    if (count > 0 && count <= ust_log_ticks()) {ust_paula_rebuild(count, clocks, rest, times);}
     tracker->next_tick = count;
-    tracker->next_beat = ticks[count];
+    schedule(tracker);
 }
 
 // Frames from the block start until the position has moved on by `delta` beats, tempo ramping by `tempo_inc` per frame.
@@ -347,6 +403,8 @@ static void capture_display(Tracker *tracker, int playing) {
         display->period[c] = (uint16_t) ust_chan_period(c);
         display->volume[c] = (uint8_t) (playing ? ust_chan_volume(c) : 0);
         display->dma[c] = (uint8_t) (playing && ust_chan_dma(c));
+        const float peak = ust_chan_peak(c);
+        if (peak > display->peak[c]) {display->peak[c] = peak;}
     }
 }
 
@@ -410,7 +468,7 @@ static clap_process_status tracker_process(const clap_plugin_t *plugin, const cl
         if (at <= (double) frame) {
             ust_tick();
             tracker->next_tick++;
-            tracker->next_beat += tick_beats();
+            schedule(tracker);
             continue;
         }
         const uint32_t until = at >= (double) frames ? frames : (uint32_t) ceil(at);
@@ -586,6 +644,7 @@ static bool webview_get_resource(const clap_plugin_t *plugin, const char *path, 
 
 static void put_u32(uint8_t *target, uint32_t value) {memcpy(target, &value, 4);}
 
+// the peaks since the last status, the page polls once per frame
 static void send_status(Tracker *tracker) {
     uint8_t message[STATUS_BYTES];
     const Display *display = &tracker->display;
@@ -603,7 +662,11 @@ static void send_status(Tracker *tracker) {
         message[12 + c * 4 + 2] = display->volume[c];
         message[12 + c * 4 + 3] = display->dma[c];
     }
-    memcpy(message + 28, tracker->values, PARAM_COUNT * 8);
+    for (int c = 0; c < 4; c++) {
+        message[28 + c] = (uint8_t) lroundf(fminf(1.0f, tracker->display.peak[c]) * 255.0f);
+        tracker->display.peak[c] = 0.0f;
+    }
+    memcpy(message + 32, tracker->values, PARAM_COUNT * 8);
     tracker->host_webview->send(tracker->host, message, sizeof(message));
 }
 
@@ -772,14 +835,14 @@ static const clap_plugin_t *create(const clap_plugin_factory_t *factory, const c
     tracker->gui_width = GUI_WIDTH;
     tracker->gui_height = GUI_HEIGHT;
     for (int index = 0; index < PARAM_COUNT; index++) {tracker->values[index] = Params[index].value;}
-    tracker->module = (uint8_t *) malloc(test_mod_len);
+    tracker->module = (uint8_t *) malloc(default_mod_len);
     if (tracker->module == NULL) {
         instances--;
         free(tracker);
         return NULL;
     }
-    memcpy(tracker->module, test_mod, test_mod_len);
-    tracker->module_len = test_mod_len;
+    memcpy(tracker->module, default_mod, default_mod_len);
+    tracker->module_len = default_mod_len;
     tracker->plugin.desc = &descriptor;
     tracker->plugin.plugin_data = tracker;
     tracker->plugin.init = tracker_init;

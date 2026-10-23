@@ -12,17 +12,23 @@ type Construct = {
     player: Replayer
 }
 
-/** Paula's four channels: period as a note, volume as a bar. */
+/** Paula's four channels: period as a note, the level as a bar falling back slowly, or the volume register where
+ * the host does not measure levels. */
 export const Channels = ({lifecycle, player}: Construct) => {
     const notes = Arrays.create(() => Inject.value("---"), 4)
     const bars: ReadonlyArray<HTMLElement> = Arrays.create(() => <i/>, 4)
+    const shown = Arrays.create(() => 0, 4)
     lifecycle.own(AnimationFrame.add(() => {
         const status = player.currentStatus
         for (let index = 0; index < 4; index++) {
             const channel = isDefined(status) ? status.channels[index] : undefined
             const active = isDefined(channel) && channel.dma
             notes[index].value = active ? noteName(channel.period) : "---"
-            bars[index].style.width = `${active ? channel.volume / 64 * 100 : 0}%`
+            const level = isDefined(channel) && isDefined(channel.level)
+                ? Math.max(channel.level, shown[index] * 0.85)
+                : active ? channel.volume / 64 : 0
+            shown[index] = level
+            bars[index].style.width = `${level * 100}%`
         }
     }))
     return (

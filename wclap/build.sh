@@ -5,13 +5,14 @@
 set -euo pipefail
 cd "$(dirname "$0")"
 OUT="${OUT:-out}"
-TEST_MOD="${TEST_MOD:-../assets/mods/000.delicate.mod}"
+# the examples the page offers, the first one is compiled in as the module a new plugin plays
+EXAMPLES="8bit_castle.mod jam_-_highway_encounter.mod jam_-_heatwave_cruise.mod kc-dancinonamiga.mod stranger_-_run.mod"
 mkdir -p "$OUT" gen
 {
   echo "#include <stdint.h>"
   (cd ../assets && xxd -i -n ptplay ptplay)
-  cp "$TEST_MOD" gen/test_mod
-  (cd gen && xxd -i -n test_mod test_mod)
+  cp "mods/${EXAMPLES%% *}" gen/default_mod
+  (cd gen && xxd -i -n default_mod default_mod)
 } | sed 's/unsigned char/static const uint8_t/; s/unsigned int/static const uint32_t/' > gen/assets.h
 SRC="protracker.c ../emu/ust.c ../emu/musashi/m68kcpu.c ../emu/musashi/m68kops.c ../emu/musashi/softfloat/softfloat.c"
 emcc $SRC -O3 -DM68K_NO_SETJMP -I../emu/musashi -Igen -I"$CLAP_INCLUDE" -o "$OUT/module.wasm" \
@@ -21,5 +22,8 @@ emcc $SRC -O3 -DM68K_NO_SETJMP -I../emu/musashi -Igen -I"$CLAP_INCLUDE" -o "$OUT
     -sERROR_ON_UNDEFINED_SYMBOLS=1
 (cd .. && npx vite build -c vite.wclap.config.ts --logLevel warn)
 rm -rf "$OUT/protracker" && mkdir -p "$OUT/protracker" && cp "$OUT/module.wasm" "$OUT/protracker/" && cp -R "$OUT/page/." "$OUT/protracker/"
+mkdir -p "$OUT/protracker/mods"
+for example in $EXAMPLES; do cp "mods/$example" "$OUT/protracker/mods/"; done
+printf '%s\n' $EXAMPLES | python3 -c 'import json, sys; print(json.dumps(sys.stdin.read().split()))' > "$OUT/protracker/mods/index.json"
 COPYFILE_DISABLE=1 tar --format ustar --no-xattrs -czf "$OUT/protracker.wclap.tar.gz" -C "$OUT" protracker
 ls -la "$OUT/module.wasm" "$OUT/protracker.wclap.tar.gz"

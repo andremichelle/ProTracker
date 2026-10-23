@@ -97,19 +97,20 @@ export class PluginLink implements Replayer, Terminable {
         const view = new DataView(buffer)
         if (buffer.byteLength < 1) {return}
         const type = view.getUint8(0)
-        if (type === PLUGIN_STATUS && buffer.byteLength >= 28 + PluginParams.Count * 8) {
+        if (type === PLUGIN_STATUS && buffer.byteLength >= 32 + PluginParams.Count * 8) {
             this.#status = {
                 pos: view.getUint8(2), pattern: view.getUint8(3), row: view.getUint8(4), speed: view.getUint8(5),
                 tempo: 0, tickHz: 0,
                 channels: Arrays.create(index => ({
                     period: view.getUint16(12 + index * 4, true),
                     volume: view.getUint8(12 + index * 4 + 2),
-                    dma: view.getUint8(12 + index * 4 + 3) !== 0
+                    dma: view.getUint8(12 + index * 4 + 3) !== 0,
+                    level: view.getUint8(28 + index) / 255
                 }), 4)
             }
             this.playing.setValue(view.getUint8(1) !== 0)
             this.params.forEach((param, id) => {
-                if (!this.#editing.has(id)) {param.setValue(view.getFloat64(28 + id * 8, true))}
+                if (!this.#editing.has(id)) {param.setValue(view.getFloat64(32 + id * 8, true))}
             })
             const serial = view.getUint32(8, true)
             if (serial !== this.#serial && serial !== this.#requested) {

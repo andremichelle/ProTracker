@@ -85,7 +85,7 @@ typedef struct {
 static Chan ch[4];
 
 /* tick log: every tick's channel registers and every DMA restart, so a seek can rebuild Paula at any tempo */
-typedef struct { uint32_t lc[4]; uint16_t len[4]; uint16_t per[4]; uint8_t speed; } TickRegs;
+typedef struct { uint32_t lc[4]; uint16_t len[4]; uint16_t per[4]; } TickRegs;
 typedef struct { uint32_t tick; uint32_t ptr; uint16_t len; uint8_t chan; } Restart;
 static int       log_on = 0;
 static TickRegs *log_ticks = NULL;
@@ -474,6 +474,7 @@ static int    external_clock = 0;   /* 1: the host fires the ticks with ust_tick
 static int   mix_on = 0;
 static float mix_l[4], mix_r[4], mix_step_l[4], mix_step_r[4], mix_to_l[4], mix_to_r[4];
 static int   mix_ramp = 0;
+static float chan_peak[4];          /* mixer path: each channel's peak since it was last read, pre-fader */
 
 /* filters */
 static float rc_a = 0.f, rc_l = 0.f, rc_r = 0.f;
@@ -600,7 +601,7 @@ EXPORT void ust_stop(void) {
 
 static void log_tick(void);
 
-/* ticks per row after the last tick, never 0: a row is a 1/16 note, so this tick lasted 1 / (4 * speed) beat */
+/* ticks per row after the last tick, never 0 */
 static int tick_speed(void) {
     int speed = pt ? (int)rd8(rd32(pt + G_SPEED)) : 6;
     return speed > 0 ? speed : 6;
@@ -656,7 +657,6 @@ static void log_tick(void) {
     }
     TickRegs *entry = &log_ticks[log_len++];
     for (int i = 0; i < 4; i++) { entry->lc[i] = ch[i].lc; entry->len[i] = ch[i].len; entry->per[i] = ch[i].per; }
-    entry->speed = (uint8_t)tick_speed();
 }
 
 /* Log every tick from now on (tick 0 = the next one), or stop logging. Starting clears the log. */
@@ -667,9 +667,10 @@ EXPORT void ust_log(int on) {
 
 EXPORT uint32_t ust_log_ticks(void) { return log_len; }
 
-/* Rebuild the DMA position of every running channel for the state before tick `count` plus `last` of a tick, each
- * tick lasting `paula_clocks_per_beat` / (4 * its speed) since the channel's last restart. Needs `count` in the log. */
-EXPORT int ust_paula_rebuild(uint32_t count, double paula_clocks_per_beat, double last) {
+/* Rebuild the DMA position of every running channel for the state before tick `count` plus `last` of a tick, tick t
+ * lasting `paula_clocks_per_beat` * (beats[t + 1] - beats[t]) since the channel's last restart. Needs `count` in the
+ * log and `beats` up to `count`. */
+EXPORT int ust_paula_rebuild(uint32_t count, double paula_clocks_per_beat, double last, const double *beats) {
     if (count == 0 || count > log_len) return -1;
     for (int i = 0; i < 4; i++) {
         Chan *c = &ch[i];
@@ -688,7 +689,7 @@ EXPORT int ust_paula_rebuild(uint32_t count, double paula_clocks_per_beat, doubl
             c->lc = log_ticks[t].lc[i];
             c->len = log_ticks[t].len[i];
             c->per = log_ticks[t].per[i];
-            double clocks = paula_clocks_per_beat / (4.0 * log_ticks[t].speed);
+            double clocks = paula_clocks_per_beat * (beats[t + 1] - beats[t]);
             chan_advance(c, t + 1 == count ? clocks * last : clocks);
         }
     }
@@ -703,19 +704,31 @@ EXPORT void ust_tick(void) {
     fire_tick();
 }
 
-/* Replay `ticks` ticks silently. After each, Paula's DMA moves on by the tick's length, `paula_clocks_per_beat` / (4 *
- * speed), the last one only by `last` of it. Returns the CPU cycles. */
-EXPORT double ust_skip_ticks(int ticks, double paula_clocks_per_beat, double last) {
+/* Replay `ticks` ticks silently, Paula's DMA moved on by `paula_clocks_per_tick` after each, the last one only by `last`
+ * of it. Returns the CPU cycles. */
+EXPORT double ust_skip_ticks(int ticks, double paula_clocks_per_tick, double last) {
     if (!pt || !playing) return 0;
     settle();
     double cycles = 0;
     for (int t = 0; t < ticks; t++) {
         cycles += fire_tick();
-        double clocks = paula_clocks_per_beat / (4.0 * tick_speed()) * (t + 1 == ticks ? last : 1.0);
+        double clocks = paula_clocks_per_tick * (t + 1 == ticks ? last : 1.0);
         for (int i = 0; i < 4; i++) chan_advance(&ch[i], clocks);
     }
     cpu_over = 0;
     return cycles;
+}
+
+/* Channel `c`'s peak since the last call, 1 = a full scale byte at volume 64. Only the mixer path measures. */
+EXPORT float ust_chan_peak(int c) {
+    float peak = chan_peak[c & 3] / 8192.f;
+    chan_peak[c & 3] = 0.f;
+    return peak;
+}
+
+/* Move every running channel's DMA on by `clocks` colour clocks without output. */
+EXPORT void ust_paula_advance(double clocks) {
+    for (int i = 0; i < 4; i++) chan_advance(&ch[i], clocks);
 }
 
 /* Paula colour clocks for one beat at `bpm`. */
@@ -864,6 +877,7 @@ EXPORT int ust_render(int frames) {
             if (n) {
                 for (int i = 0; i < 4; i++) {
                     float v = sum[i] / (float)n + fades[i];
+                    if (fabsf(v) > chan_peak[i]) chan_peak[i] = fabsf(v);
                     fl += v * mix_l[i];
                     fr += v * mix_r[i];
                 }

@@ -10,8 +10,8 @@ import {PluginLink} from "@/wclap/PluginLink"
 
 const className = Html.adoptStyleSheet(css, "PluginPage")
 
-// the 8bitboy collection of the web player, fetched on demand, never bundled
-const COLLECTION = "https://andremichelle.github.io/ProTracker/mods/"
+// the example modules shipped in the bundle next to the page
+const EXAMPLES = "./mods/"
 
 type Construct = {
     lifecycle: Lifecycle
@@ -33,9 +33,9 @@ export const PluginPage = ({lifecycle, link}: Construct) => {
         }}/>
     )
     fileInput.hidden = true
-    const loadFromCollection = async (name: string) => {
+    const loadExample = async (name: string) => {
         menu.hidden = true
-        const response = await fetch(`${COLLECTION}${encodeURIComponent(name)}`).catch(reason => reason)
+        const response = await fetch(`${EXAMPLES}${encodeURIComponent(name)}`).catch(reason => reason)
         if (response instanceof Response && response.ok) {
             link.load(new Uint8Array(await response.arrayBuffer()))
         } else {
@@ -44,18 +44,18 @@ export const PluginPage = ({lifecycle, link}: Construct) => {
     }
     const menu: HTMLElement = <div className="menu"/>
     menu.hidden = true
-    const collection: HTMLButtonElement = (
-        <button type="button" title="The 8bitboy collection" onclick={() => menu.hidden = !menu.hidden}>Collection</button>
+    const examples: HTMLButtonElement = (
+        <button type="button" title="Example modules" onclick={() => menu.hidden = !menu.hidden}>Examples</button>
     )
     const loadButton: HTMLButtonElement = <button type="button" onclick={() => fileInput.click()}>Load file...</button>
-    collection.tabIndex = -1
+    examples.tabIndex = -1
     loadButton.tabIndex = -1
-    collection.disabled = true
-    fetch(`${COLLECTION}index.json`).then(response => response.json()).then((names: ReadonlyArray<string>) => {
+    examples.disabled = true
+    fetch(`${EXAMPLES}index.json`).then(response => response.json()).then((names: ReadonlyArray<string>) => {
         menu.append(...names.map(name =>
-            <div className="item" onclick={() => loadFromCollection(name)}>{name.replace(/\.mod$/i, "")}</div>))
-        collection.disabled = false
-    }, () => link.error.setValue("The collection is not reachable"))
+            <div className="item" onclick={() => loadExample(name)}>{name.replace(/\.mod$/i, "")}</div>))
+        examples.disabled = false
+    }, () => link.error.setValue("The examples are missing"))
     lifecycle.ownAll(
         link.module.catchupAndSubscribe(option => title.value = option.mapOr(module => module.title || "(untitled)", "")),
         link.error.catchupAndSubscribe(owner => error.value = owner.getValue()),
@@ -66,7 +66,7 @@ export const PluginPage = ({lifecycle, link}: Construct) => {
                 <span className="title">{title}</span>
                 <span className="state">{playing}</span>
                 <span className="error">{error}</span>
-                <div className="collection">{collection}{menu}</div>
+                <div className="examples">{examples}{menu}</div>
                 {loadButton}
                 {fileInput}
             </header>
@@ -74,7 +74,7 @@ export const PluginPage = ({lifecycle, link}: Construct) => {
                 <Positions lifecycle={lifecycle} player={link}/>
                 <PatternView lifecycle={lifecycle} player={link}/>
             </main>
-            <Channels lifecycle={lifecycle} player={link}/>
+            <div className="channels"><Channels lifecycle={lifecycle} player={link}/></div>
             <Mixer lifecycle={lifecycle} link={link}/>
         </div>
     )
@@ -82,7 +82,7 @@ export const PluginPage = ({lifecycle, link}: Construct) => {
         Events.subscribe(element, "mousedown", event => event.preventDefault()),
         Events.subscribe(document, "pointerdown", event => {
             const target = event.target
-            if (!menu.hidden && target instanceof Node && !collection.contains(target) && !menu.contains(target)) {menu.hidden = true}
+            if (!menu.hidden && target instanceof Node && !examples.contains(target) && !menu.contains(target)) {menu.hidden = true}
         }),
         Events.subscribe(element, "dragover", event => event.preventDefault()),
         Events.subscribe(element, "drop", event => {

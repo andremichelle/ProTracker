@@ -47,7 +47,8 @@ export interface Status {
     readonly speed: number
     readonly tempo: number
     readonly tickHz: number
-    readonly channels: ReadonlyArray<{period: number, volume: number, dma: boolean}>
+    // level: the channel's peak since the last status (0..1), only where the host measures it
+    readonly channels: ReadonlyArray<{period: number, volume: number, dma: boolean, level?: number}>
 }
 
 export type Response =
