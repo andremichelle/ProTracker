@@ -462,6 +462,7 @@ static int load_hunks(const uint8_t *d, uint32_t len, uint32_t *base, uint32_t *
 /* ------------------------------------------------------------------------ */
 static double   rate = 48000.0;
 static uint32_t module_len = 0;
+static uint32_t module_slots = 0;    /* patterns the loaded module has room for */
 static int      playing = 0;
 static int      filter_model = 1;   /* 0: none, 1: A500 (fixed RC + LED filter) */
 
@@ -555,16 +556,30 @@ EXPORT int ust_load_program(const uint8_t *data, uint32_t len) {
     return 0;
 }
 
-/* Load a 31 instrument module (header, patterns, samples) verbatim. */
-EXPORT int ust_load_module(const uint8_t *m, uint32_t len) {
+/* Load a 31 instrument module (header, patterns, samples), with room for `slots` patterns before the samples (0: as
+ * the file lays them out), so a pattern added later moves no sample. */
+static int load_module(const uint8_t *m, uint32_t len, uint32_t slots) {
     if (!pt) return -1;
-    if (len < 1084 || PT_MODULE + len > MODULE_LIMIT) return -2;
+    if (len < 1084) return -2;
+    uint32_t count = 0;
+    for (int i = 0; i < 128; i++) if (m[952 + i] + 1u > count) count = m[952 + i] + 1u;
+    const uint32_t patterns_end = 1084 + count * 1024 < len ? 1084 + count * 1024 : len;
+    if (slots < count) slots = count;
+    const uint32_t ram_len = slots == count ? len : 1084 + slots * 1024 + (len - patterns_end);
+    if (PT_MODULE + ram_len > MODULE_LIMIT) return -2;
     settle();
     playing = 0;
     call_sub(pt + G_END, 1000000);             /* mt_end: silence */
     journal_reset(0, 0);
-    memcpy(ram + PT_MODULE, m, len);
-    module_len = len;
+    if (ram_len == len) {
+        memcpy(ram + PT_MODULE, m, len);
+    } else {
+        memset(ram + PT_MODULE, 0, ram_len);
+        memcpy(ram + PT_MODULE, m, patterns_end);
+        memcpy(ram + PT_MODULE + 1084 + slots * 1024, m + patterns_end, len - patterns_end);
+    }
+    module_len = ram_len;
+    module_slots = slots;
     /* ProTracker's loader sanitises sample headers before the routine ever
      * sees them: a repeat length of 0 becomes 1 (AUDxLEN = 0 would loop
      * 65536 words of memory) and loops are clamped to the sample. */
@@ -577,10 +592,24 @@ EXPORT int ust_load_module(const uint8_t *m, uint32_t len) {
         wr16(h + 26, rs);
         wr16(h + 28, rl);
     }
+    /* mt_init places the samples behind the highest pattern it finds, and every new maximum shortens its scan: the first
+     * entry claims the slots meanwhile */
+    const uint8_t first = ram[PT_MODULE + 952];
+    if (slots > count) ram[PT_MODULE + 952] = (uint8_t)(slots - 1);
     call_sub(pt + G_INIT, 4000000);            /* mt_init (falls through mt_end) */
-    journal_reset(PT_MODULE, PT_MODULE + len);
+    ram[PT_MODULE + 952] = first;
+    journal_reset(PT_MODULE, PT_MODULE + ram_len);
     go_idle();
     return 0;
+}
+
+EXPORT int ust_load_module(const uint8_t *m, uint32_t len) { return load_module(m, len, 0); }
+
+EXPORT int ust_load_module_slots(const uint8_t *m, uint32_t len, uint32_t slots) { return load_module(m, len, slots); }
+
+/* Write a byte of the loaded module's header or patterns, the routine reads them as it plays. */
+EXPORT void ust_module_poke(uint32_t offset, uint8_t value) {
+    if (module_len && offset < 1084 + module_slots * 1024) ram[PT_MODULE + offset] = value;
 }
 
 EXPORT int ust_play(void) {
@@ -666,6 +695,13 @@ EXPORT void ust_log(int on) {
 }
 
 EXPORT uint32_t ust_log_ticks(void) { return log_len; }
+
+/* Forget the log from tick `count` on, and log again from there with `on`. */
+EXPORT void ust_log_truncate(uint32_t count, int on) {
+    if (count < log_len) log_len = count;
+    while (log_restart_len > 0 && log_restarts[log_restart_len - 1].tick >= log_len) log_restart_len--;
+    log_on = on ? 1 : 0;
+}
 
 /* Rebuild the DMA position of every running channel for the state before tick `count` plus `last` of a tick, tick t
  * lasting `paula_clocks_per_beat` * (beats[t + 1] - beats[t]) since the channel's last restart. Needs `count` in the

@@ -71,8 +71,8 @@ export const PluginPage = ({lifecycle, link}: Construct) => {
                 {fileInput}
             </header>
             <main>
-                <Positions lifecycle={lifecycle} player={link}/>
-                <PatternView lifecycle={lifecycle} player={link}/>
+                <Positions lifecycle={lifecycle} player={link} edit={link}/>
+                <PatternView lifecycle={lifecycle} player={link} edit={link}/>
             </main>
             <div className="channels"><Channels lifecycle={lifecycle} player={link}/></div>
             <Mixer lifecycle={lifecycle} link={link}/>

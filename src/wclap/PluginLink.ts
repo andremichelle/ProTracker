@@ -1,6 +1,6 @@
 import {Arrays, DefaultObservableValue, MutableObservableOption, Nullable, Terminable, Terminator, tryCatch} from "@opendaw/lib-std"
 import {AnimationFrame, Events} from "@opendaw/lib-dom"
-import {Module} from "@/Module"
+import {Cell, encodeCell, Module} from "@/Module"
 import {Replayer} from "@/Replayer"
 import type {Status} from "@/worklet/processor"
 
@@ -18,7 +18,8 @@ export namespace PluginParams {
 }
 
 // message types, see webview_receive in wclap/protracker.c
-const PAGE_POLL = 1, PAGE_MODULE_REQUEST = 2, PAGE_LOAD = 3, PAGE_PARAM_BEGIN = 4, PAGE_PARAM_SET = 5, PAGE_PARAM_END = 6
+const PAGE_POLL = 1, PAGE_MODULE_REQUEST = 2, PAGE_LOAD = 3, PAGE_PARAM_BEGIN = 4, PAGE_PARAM_SET = 5, PAGE_PARAM_END = 6,
+    PAGE_SET_PATTERN = 7, PAGE_INSERT_PATTERN = 8, PAGE_SET_CELL = 9
 const PLUGIN_STATUS = 1, PLUGIN_MODULE = 2
 
 /** The page's end of the plugin: polls the replayer every frame, fetches the module when it changed, sends edits. */
@@ -56,6 +57,20 @@ export class PluginLink implements Replayer, Terminable {
         const message = new Uint8Array(4 + result.value.data.length)
         message[0] = PAGE_LOAD
         message.set(result.value.data, 4)
+        this.#post(message)
+    }
+
+    /** Plays `pattern` at `position`, a pattern past the last one is created empty. */
+    setPattern(position: number, pattern: number): void {this.#post(new Uint8Array([PAGE_SET_PATTERN, position, pattern]))}
+
+    /** Inserts a new empty pattern into the song at `position`. */
+    insertPattern(position: number): void {this.#post(new Uint8Array([PAGE_INSERT_PATTERN, position]))}
+
+    /** Writes one step of a pattern. */
+    setCell(pattern: number, row: number, channel: number, cell: Cell): void {
+        const message = new Uint8Array(8)
+        message.set([PAGE_SET_CELL, pattern, row, channel])
+        message.set(encodeCell(cell), 4)
         this.#post(message)
     }
 

@@ -12,6 +12,8 @@ initializeColors(document.documentElement)
 const lifecycle = new Terminator()
 const link = lifecycle.own(new PluginLink())
 document.body.appendChild(PluginPage({lifecycle, link}))
-// keys belong to the host: whatever takes the focus gives it back
-document.addEventListener("focusin", event => {if (event.target instanceof HTMLElement) {event.target.blur()}})
+// keys belong to the host: whatever takes the focus gives it back, except a field to type into
+document.addEventListener("focusin", event => {
+    if (event.target instanceof HTMLElement && !event.target.hasAttribute("data-keep-focus")) {event.target.blur()}
+})
 AnimationFrame.start(window)

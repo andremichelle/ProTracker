@@ -25,6 +25,21 @@ export const noteName = (period: int): string => {
     return `${NAMES[best % 12]}${1 + Math.floor(best / 12)}`
 }
 
+/** The period of a note name like "C-1", "F#2" or "a#3" (ProTracker's three octaves, finetune 0), 0 for "---" or "".
+ * Null if it is no note. */
+export const periodOf = (name: string): Nullable<int> => {
+    const text = name.trim().toUpperCase()
+    if (text === "" || /^-+$/.test(text)) {return 0}
+    const match = /^([A-G])([-#]?)([1-3])$/.exec(text)
+    if (!isDefined(match)) {return null}
+    const index = NAMES.indexOf(`${match[1]}${match[2] === "#" ? "#" : "-"}`)
+    return index < 0 ? null : PERIODS[(Number(match[3]) - 1) * 12 + index]
+}
+
+/** The four bytes a cell takes in the module. */
+export const encodeCell = ({period, sample, effect, arg}: Cell): Uint8Array => new Uint8Array([
+    (sample & 0xf0) | ((period >> 8) & 0x0f), period & 0xff, ((sample & 0x0f) << 4) | (effect & 0x0f), arg & 0xff])
+
 const hex = (value: int, digits: int) => value.toString(16).toUpperCase().padStart(digits, "0")
 export const cellText = (cell: Cell): string =>
     `${noteName(cell.period)} ${cell.sample === 0 ? ".." : hex(cell.sample, 2)} ${cell.effect === 0 && cell.arg === 0 ? "..." : hex(cell.effect, 1) + hex(cell.arg, 2)}`

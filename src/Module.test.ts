@@ -1,5 +1,5 @@
 import {describe, expect, it} from "vitest"
-import {Module, noteName} from "@/Module"
+import {encodeCell, Module, noteName, periodOf} from "@/Module"
 
 const setTag = (d: Uint8Array, tag: string): void => {
     for (let i = 0; i < 4; i++) {d[1080 + i] = tag.charCodeAt(i)}
@@ -162,5 +162,40 @@ describe("noteName", () => {
 
     it("snaps a slightly off period to the nearest known note", () => {
         expect(noteName(430)).toBe("C-2")
+    })
+})
+
+describe("periodOf", () => {
+    it("reads note names in ProTracker's three octaves", () => {
+        expect(periodOf("C-1")).toBe(856)
+        expect(periodOf("c#2")).toBe(404)
+        expect(periodOf("A2")).toBe(254)
+        expect(periodOf("B-3")).toBe(113)
+    })
+
+    it("reads an empty note as 0", () => {
+        expect(periodOf("---")).toBe(0)
+        expect(periodOf("")).toBe(0)
+    })
+
+    it("refuses what is no note", () => {
+        expect(periodOf("H-2")).toBeNull()
+        expect(periodOf("E#2")).toBeNull()
+        expect(periodOf("C-4")).toBeNull()
+        expect(periodOf("C-0")).toBeNull()
+    })
+
+    it("names every period it returns the same", () => {
+        for (const name of ["C-1", "D#1", "F#2", "G-2", "B-3"]) {expect(noteName(periodOf(name) ?? -1)).toBe(name)}
+    })
+})
+
+describe("encodeCell", () => {
+    it("stores note, sample, effect and argument as the module does", () => {
+        const data = buildMinimalProTracker("cells", 1)
+        const cell = {period: 0x1AC, sample: 0x13, effect: 0xC, arg: 0x20}
+        data.set(encodeCell(cell), 1084 + 5 * 16 + 2 * 4)
+        expect(Module.parse(data).patterns[0][5][2]).toStrictEqual(cell)
+        expect(Array.from(encodeCell(cell))).toStrictEqual([0x11, 0xAC, 0x3C, 0x20])
     })
 })

@@ -14,7 +14,8 @@
 
 extern void ust_init(double sample_rate);
 extern int ust_load_program(const uint8_t *data, uint32_t len);
-extern int ust_load_module(const uint8_t *data, uint32_t len);
+extern int ust_load_module_slots(const uint8_t *data, uint32_t len, uint32_t slots);
+extern void ust_module_poke(uint32_t offset, uint8_t value);
 extern int ust_play(void);
 extern int ust_render(int frames);
 extern float *ust_out_l(void);
@@ -41,6 +42,7 @@ extern float ust_chan_peak(int c);
 extern int ust_row(void);
 extern void ust_log(int on);
 extern uint32_t ust_log_ticks(void);
+extern void ust_log_truncate(uint32_t count, int on);
 extern int ust_paula_rebuild(uint32_t count, double paula_clocks_per_beat, double last, const double *beats);
 
 #define ROWS_PER_BEAT 4.0
@@ -53,13 +55,18 @@ extern int ust_paula_rebuild(uint32_t count, double paula_clocks_per_beat, doubl
 #define STATE_MAX_BYTES (4u << 20)
 #define MODULE_MAX_BYTES 0x170000u
 #define OUT_EVENTS 256
+#define MACHINE_EDITS 64
+#define TABLE_BYTES 130 // song length, restart and the 128 positions from byte 950 of the module
 #define GUI_WIDTH 960
 #define GUI_HEIGHT 640
 #define GUI_MIN_WIDTH 640
 #define GUI_MIN_HEIGHT 420
 
 // page -> plugin
-enum {PAGE_POLL = 1, PAGE_MODULE_REQUEST = 2, PAGE_LOAD = 3, PAGE_PARAM_BEGIN = 4, PAGE_PARAM_SET = 5, PAGE_PARAM_END = 6};
+enum {
+    PAGE_POLL = 1, PAGE_MODULE_REQUEST = 2, PAGE_LOAD = 3, PAGE_PARAM_BEGIN = 4, PAGE_PARAM_SET = 5, PAGE_PARAM_END = 6,
+    PAGE_SET_PATTERN = 7, PAGE_INSERT_PATTERN = 8, PAGE_SET_CELL = 9
+};
 // plugin -> page
 enum {PLUGIN_STATUS = 1, PLUGIN_MODULE = 2};
 #define STATUS_BYTES (32 + PARAM_COUNT * 8)
@@ -89,6 +96,12 @@ void emscripten_notify_memory_growth(size_t index) {(void) index;}
 // a param change from the page, reported to the host as a gesture and a value
 typedef struct {uint16_t type; clap_id id; double value;} OutEvent;
 
+// what an edit changes in the song, so the pass is cut where the routine first reads it
+enum {CUT_POSITION, CUT_POSITIONS_FROM, CUT_PATTERN};
+
+// an edit for the machine: bytes at an offset of the module and where the song changed
+typedef struct {uint32_t offset, length; uint8_t bytes[TABLE_BYTES]; int cut, value;} MachineEdit;
+
 // what the page shows, taken at the end of every block
 typedef struct {uint8_t playing, pos, pattern, row, speed, song_len; uint16_t period[4]; uint8_t volume[4], dma[4]; float peak[4];} Display;
 
@@ -101,8 +114,11 @@ typedef struct {
     uint8_t *snapshots;      // the machine before tick k * SNAPSHOT_TICKS
     uint32_t snapshot_size;
     uint32_t snapshot_count;
+    uint32_t snapshot_capacity;
     double *times;           // the beat tick k fires at, for every tick of the snapshot pass and the one after
+    uint8_t *tick_pos;       // the song position after tick k of the pass
     uint32_t tick_count;     // ticks in the snapshot pass
+    int pass_ended;          // the pass reached the song end or the cap, else an edit cut it and a seek runs it on
     int64_t next_tick;       // the next tick to fire
     double next_beat;        // the beat it fires at
     double beat_start;       // past the snapshot pass: the beat being played, measured ahead when it starts
@@ -118,6 +134,8 @@ typedef struct {
     uint8_t *pending_module; // a module from the page, swapped in at the next block start
     uint32_t pending_len;
     volatile int pending_ready;
+    MachineEdit machine_edits[MACHINE_EDITS];
+    volatile uint32_t edit_write, edit_read;
     OutEvent out_events[OUT_EVENTS];
     volatile uint32_t out_write, out_read;
     Display display;
@@ -159,6 +177,7 @@ static void tracker_destroy(const clap_plugin_t *plugin) {
     instances--;
     free(tracker->snapshots);
     free(tracker->times);
+    free(tracker->tick_pos);
     free(tracker->fork);
     free(tracker->module);
     free(tracker->pending_module);
@@ -215,23 +234,42 @@ static void schedule(Tracker *tracker) {
         + (double) (tracker->next_tick - tracker->beat_start_tick) / (double) tracker->beat_ticks;
 }
 
-// One silent pass through the song, a snapshot every SNAPSHOT_TICKS, until the beat in which a backward position jump
-// (the song wraps or loops with Bxx) happened is complete, or the cap.
-static int build_snapshots(Tracker *tracker) {
+static int is_beat(double beats) {return fabs(beats - round(beats)) < 1.0e-9;}
+
+// room for `snapshots` snapshots and their ticks
+static int reserve_pass(Tracker *tracker, uint32_t snapshots) {
+    if (snapshots <= tracker->snapshot_capacity) {return 1;}
+    uint32_t capacity = tracker->snapshot_capacity == 0 ? 64 : tracker->snapshot_capacity * 2;
+    while (capacity < snapshots) {capacity *= 2;}
+    const size_t ticks = (size_t) capacity * SNAPSHOT_TICKS + 1;
+    uint8_t *grown = (uint8_t *) realloc(tracker->snapshots, (size_t) capacity * tracker->snapshot_size);
+    if (grown != NULL) {tracker->snapshots = grown;}
+    double *times = (double *) realloc(tracker->times, ticks * sizeof(double));
+    if (times != NULL) {tracker->times = times;}
+    uint8_t *positions = (uint8_t *) realloc(tracker->tick_pos, ticks);
+    if (positions != NULL) {tracker->tick_pos = positions;}
+    if (grown == NULL || times == NULL || positions == NULL) {return 0;}
+    tracker->snapshot_capacity = capacity;
+    return 1;
+}
+
+// A new pass, the machine at its start: mt_init leaves the routine speed - 1 ticks before row 0, they run silently, so
+// row 0 plays at beat 0.
+static int begin_pass(Tracker *tracker) {
     free(tracker->snapshots);
     free(tracker->times);
+    free(tracker->tick_pos);
     free(tracker->fork);
     tracker->snapshots = NULL;
     tracker->times = NULL;
+    tracker->tick_pos = NULL;
     tracker->snapshot_count = 0;
+    tracker->snapshot_capacity = 0;
     tracker->tick_count = 0;
+    tracker->pass_ended = 0;
     tracker->snapshot_size = ust_snapshot_size();
     tracker->fork = (uint8_t *) malloc(tracker->snapshot_size);
-    if (tracker->fork == NULL) {return 0;}
-    uint32_t capacity = 0;
-    int last_pos = 0, ended = 0;
-    double slots = 0.0;
-    // mt_init leaves the routine speed - 1 ticks before row 0: run them silently, so row 0 plays at beat 0
+    if (tracker->fork == NULL || !reserve_pass(tracker, 1)) {return 0;}
     const int initial = ust_song_pos() * 64 + ust_row();
     ust_snapshot_save(tracker->fork);
     int lead = 0;
@@ -242,38 +280,96 @@ static int build_snapshots(Tracker *tracker) {
     }
     ust_snapshot_load(tracker->fork);
     if (lead > 0 && lead < 256) {ust_skip_ticks(lead, 0.0, 1.0);}
+    tracker->times[0] = 0.0;
     ust_log(1);
-    for (int64_t tick = 0; tick < MAX_SNAPSHOT_TICKS; tick++) {
-        if (ended && fabs(slots - round(slots)) < 1.0e-9) {break;}
-        if (tick % SNAPSHOT_TICKS == 0) {
-            if (tracker->snapshot_count == capacity) {
-                capacity = capacity == 0 ? 64 : capacity * 2;
-                uint8_t *grown = (uint8_t *) realloc(tracker->snapshots, (size_t) capacity * tracker->snapshot_size);
-                double *times = (double *) realloc(tracker->times, ((size_t) capacity * SNAPSHOT_TICKS + 1) * sizeof(double));
-                if (grown != NULL) {tracker->snapshots = grown;}
-                if (times != NULL) {tracker->times = times;}
-                if (grown == NULL || times == NULL) {break;}
-            }
+    return 1;
+}
+
+// The silent pass on from `tick_count`, the machine standing there, a snapshot every SNAPSHOT_TICKS, until the beat in
+// which a backward position jump (the song wraps or loops with Bxx) happened is complete, the cap, or the first beat
+// past `until`.
+static void extend_pass(Tracker *tracker, double until) {
+    const uint32_t from = tracker->tick_count;
+    double slots = tracker->times[from];
+    int last_pos = from == 0 ? 0 : tracker->tick_pos[from - 1];
+    int ended = 0;
+    ust_log_truncate(from, 1);
+    for (int64_t tick = from; tick < MAX_SNAPSHOT_TICKS; tick++) {
+        if (is_beat(slots) && (ended || round(slots) > until)) {break;}
+        if (tick % SNAPSHOT_TICKS == 0 && tick / SNAPSHOT_TICKS == tracker->snapshot_count) {
+            if (!reserve_pass(tracker, tracker->snapshot_count + 1)) {ended = 1; break;}
             ust_snapshot_save(tracker->snapshots + (size_t) tracker->snapshot_count++ * tracker->snapshot_size);
         }
         tracker->times[tick] = slots;
         ust_skip_ticks(1, 0.0, 1.0);
         slots += tick_slots();
-        tracker->tick_count = (uint32_t) tick + 1;
         const int pos = ust_song_pos();
+        tracker->tick_pos[tick] = (uint8_t) pos;
+        tracker->tick_count = (uint32_t) tick + 1;
         if (pos < last_pos) {ended = 1;}
         last_pos = pos;
     }
     ust_log(0);
+    tracker->pass_ended = ended || tracker->tick_count >= MAX_SNAPSHOT_TICKS;
+    tracker->times[tracker->tick_count] = is_beat(slots) ? round(slots) : slots;
+    spread_beats(tracker->times + from, tracker->tick_count - from);
+}
+
+// The machine at the end of the pass, the tick log up to it, so the pass runs on from there.
+static void resume_pass(Tracker *tracker) {
+    const uint32_t index = tracker->tick_count / SNAPSHOT_TICKS;
+    ust_snapshot_load(tracker->snapshots + (size_t) index * tracker->snapshot_size);
+    ust_log_truncate(index * SNAPSHOT_TICKS, 1);
+    const uint32_t replay = tracker->tick_count - index * SNAPSHOT_TICKS;
+    if (replay > 0) {ust_skip_ticks((int) replay, 0.0, 1.0);}
+}
+
+static int build_snapshots(Tracker *tracker) {
+    if (!begin_pass(tracker)) {return 0;}
+    extend_pass(tracker, INFINITY);
     if (tracker->snapshot_count == 0) {return 0;}
-    tracker->times[tracker->tick_count] = slots;
-    spread_beats(tracker->times, tracker->tick_count);
     ust_snapshot_load(tracker->snapshots);
     return 1;
 }
 
+static int reaches(const Tracker *tracker, uint8_t position, int kind, int value) {
+    switch (kind) {
+        case CUT_POSITION: return position == value;
+        case CUT_POSITIONS_FROM: return position >= value;
+        default: return tracker->module[952 + (position & 0x7f)] == value;
+    }
+}
+
+// After an edit the pass stays valid up to the beat in which the routine first reaches what changed (a position, any
+// position from one on, or a pattern). A beat playing past that point keeps its measure.
+static void cut_pass(Tracker *tracker, int kind, int value) {
+    uint32_t tick = 0;
+    while (tick < tracker->tick_count && !reaches(tracker, tracker->tick_pos[tick], kind, value)) {tick++;}
+    if (tick == tracker->tick_count) {return;}
+    const double *times = tracker->times;
+    uint32_t cut = tick;
+    while (cut > 0 && !is_beat(times[cut])) {cut--;}
+    if (tracker->next_tick >= cut && tracker->next_tick < tracker->tick_count) {
+        uint32_t start = (uint32_t) tracker->next_tick;
+        while (start > cut && !is_beat(times[start])) {start--;}
+        uint32_t end = start + 1;
+        while (end < tracker->tick_count && !is_beat(times[end])) {end++;}
+        tracker->beat_start = times[start];
+        tracker->beat_start_tick = start;
+        tracker->beat_ticks = end - start;
+    }
+    tracker->tick_count = cut;
+    if (tracker->snapshot_count > cut / SNAPSHOT_TICKS + 1) {tracker->snapshot_count = cut / SNAPSHOT_TICKS + 1;}
+    tracker->pass_ended = 0;
+    ust_log_truncate(cut, 0);
+}
+
 // The machine as it is at `beats`: every tick before it fired, Paula moved on to it.
 static void seek(Tracker *tracker, double beats, double bpm) {
+    if (!tracker->pass_ended && beats - 1.0e-9 > tracker->times[tracker->tick_count]) {
+        resume_pass(tracker);
+        extend_pass(tracker, beats);
+    }
     const double *times = tracker->times;
     const uint32_t last = tracker->tick_count;
     const double clocks = ust_paula_clocks_per_beat(bpm);
@@ -341,10 +437,22 @@ static void handle_event(Tracker *tracker, const clap_event_header_t *header) {
     tracker->mix_dirty = 1;
 }
 
-// the module into the machine, playing from its start, the next block seeks to the transport
+// M!K! modules hold up to 100 patterns, all others 64
+static int pattern_slots(const uint8_t *module) {return memcmp(module + 1080, "M!K!", 4) == 0 ? 100 : 64;}
+
+// ProTracker counts every one of the 128 table entries, also those past the song length
+static int pattern_count(const uint8_t *table) {
+    int count = 0;
+    for (int index = 0; index < 128; index++) {if (table[index] + 1 > count) {count = table[index] + 1;}}
+    return count;
+}
+
+// the module into the machine with room for every pattern, playing from its start, the next block seeks to the transport
 static int start_module(Tracker *tracker) {
     tracker->playing = 0;
-    return ust_load_module(tracker->module, tracker->module_len) == 0 && ust_play() == 0 && build_snapshots(tracker);
+    tracker->edit_read = tracker->edit_write;
+    return ust_load_module_slots(tracker->module, tracker->module_len, (uint32_t) pattern_slots(tracker->module)) == 0
+        && ust_play() == 0 && build_snapshots(tracker);
 }
 
 // takes ownership of `module`, keeps the previous one if the new one does not start
@@ -362,6 +470,82 @@ static bool swap_module(Tracker *tracker, uint8_t *module, uint32_t module_len) 
     }
     free(previous);
     tracker->module_serial++;
+    return true;
+}
+
+// An edit of the song's position list from the page: the module the state saves changes now, the machine at the next
+// block start. `pattern` < 0 inserts a new empty pattern at `position`. A pattern no position plays anymore is kept by a
+// free entry past the song, so nothing is lost.
+static bool edit_table(Tracker *tracker, int position, int pattern) {
+    if (tracker->edit_write - tracker->edit_read >= MACHINE_EDITS) {return false;}
+    const uint8_t *file = tracker->module;
+    const int length = file[950];
+    const int slots = pattern_slots(file);
+    uint8_t table[128];
+    memcpy(table, file + 952, 128);
+    const int before = pattern_count(table);
+    const int insert = pattern < 0;
+    int new_length = length;
+    if (insert) {
+        if (position < 0 || position > length || length >= 128 || before >= slots) {return false;}
+        memmove(table + position + 1, table + position, (size_t) (127 - position));
+        table[position] = (uint8_t) before;
+        new_length++;
+    } else {
+        if (position < 0 || position >= length || pattern >= slots) {return false;}
+        table[position] = (uint8_t) pattern;
+    }
+    const int needed = pattern_count(table);
+    const int keep = needed > before ? needed : before;
+    if (needed < keep) {
+        if (new_length >= 128) {return false;}
+        table[new_length] = (uint8_t) (keep - 1);
+    }
+    uint8_t *edited = tracker->module;
+    if (keep > before) {
+        const uint32_t samples_at = tracker->module_len < 1084u + before * 1024u ? tracker->module_len : 1084u + before * 1024u;
+        const uint32_t len = 1084u + keep * 1024u + (tracker->module_len - samples_at);
+        if (len > MODULE_MAX_BYTES) {return false;}
+        edited = (uint8_t *) calloc(len, 1);
+        if (edited == NULL) {return false;}
+        memcpy(edited, file, samples_at);
+        memcpy(edited + 1084 + keep * 1024, file + samples_at, tracker->module_len - samples_at);
+        free(tracker->module);
+        tracker->module = edited;
+        tracker->module_len = len;
+    }
+    edited[950] = (uint8_t) new_length;
+    memcpy(edited + 952, table, 128);
+    MachineEdit *edit = &tracker->machine_edits[tracker->edit_write % MACHINE_EDITS];
+    edit->offset = 950;
+    edit->length = TABLE_BYTES;
+    memcpy(edit->bytes, edited + 950, TABLE_BYTES);
+    edit->cut = insert ? CUT_POSITIONS_FROM : CUT_POSITION;
+    edit->value = insert && position == length ? length - 1 : position;
+    tracker->edit_write++;
+    tracker->module_serial++;
+    if (tracker->host_state != NULL) {tracker->host_state->mark_dirty(tracker->host);}
+    return true;
+}
+
+// A step of a pattern from the page: note, sample and effect as the module stores them, four bytes.
+static bool edit_cell(Tracker *tracker, int pattern, int row, int channel, const uint8_t *cell) {
+    if (tracker->edit_write - tracker->edit_read >= MACHINE_EDITS) {return false;}
+    const uint32_t offset = 1084u + (uint32_t) pattern * 1024u + (uint32_t) row * 16u + (uint32_t) channel * 4u;
+    const int sample = (cell[0] & 0xf0) | (cell[2] >> 4);
+    if (pattern >= pattern_count(tracker->module + 952) || row >= 64 || channel >= 4 || sample > 31
+        || offset + 4 > tracker->module_len) {return false;}
+    if (memcmp(tracker->module + offset, cell, 4) == 0) {return true;}
+    memcpy(tracker->module + offset, cell, 4);
+    MachineEdit *edit = &tracker->machine_edits[tracker->edit_write % MACHINE_EDITS];
+    edit->offset = offset;
+    edit->length = 4;
+    memcpy(edit->bytes, cell, 4);
+    edit->cut = CUT_PATTERN;
+    edit->value = pattern;
+    tracker->edit_write++;
+    tracker->module_serial++;
+    if (tracker->host_state != NULL) {tracker->host_state->mark_dirty(tracker->host);}
     return true;
 }
 
@@ -445,6 +629,14 @@ static clap_process_status tracker_process(const clap_plugin_t *plugin, const cl
         tracker->pending_module = NULL;
         tracker->pending_ready = 0;
         if (tracker->ready) {swap_module(tracker, module, module_len);} else {free(module);}
+    }
+    while (tracker->edit_read != tracker->edit_write) {
+        const MachineEdit *edit = &tracker->machine_edits[tracker->edit_read % MACHINE_EDITS];
+        if (tracker->ready) {
+            for (uint32_t index = 0; index < edit->length; index++) {ust_module_poke(edit->offset + index, edit->bytes[index]);}
+            cut_pass(tracker, edit->cut, edit->value);
+        }
+        tracker->edit_read++;
     }
     const clap_event_transport_t *transport = process->transport;
     const int playing = tracker->ready && transport != NULL && (transport->flags & CLAP_TRANSPORT_IS_PLAYING) != 0
@@ -721,6 +913,12 @@ static bool webview_receive(const clap_plugin_t *plugin, const void *buffer, uin
             if (tracker->host_state != NULL) {tracker->host_state->mark_dirty(tracker->host);}
             return true;
         }
+        case PAGE_SET_PATTERN:
+            return size >= 3 && edit_table(tracker, bytes[1], bytes[2]);
+        case PAGE_INSERT_PATTERN:
+            return size >= 2 && edit_table(tracker, bytes[1], -1);
+        case PAGE_SET_CELL:
+            return size >= 8 && edit_cell(tracker, bytes[1], bytes[2], bytes[3], bytes + 4);
         case PAGE_PARAM_BEGIN:
             page_param(tracker, CLAP_EVENT_PARAM_GESTURE_BEGIN, bytes, size);
             return true;
