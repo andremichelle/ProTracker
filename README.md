@@ -155,6 +155,18 @@ Long-term, not currently planned:
 
 ## Licenses
 
-Musashi is MIT licensed, see `emu/musashi/readme.txt`. The playroutine is
-Peter Hanning's, distributed with ProTracker for use in other productions.
-The modules in `assets/mods/` are the 8bitboy collection.
+* **This project's code** is MIT licensed, see `LICENSE`.
+* **Musashi** is MIT licensed, see `emu/musashi/readme.txt`.
+* **The playroutine** (`emu/pt/PT-CIAPlay.s`) is by Peter "Crayon" Hanning /
+  Mushroom Studios, 1992. It shipped on the ProTracker 2.3A disk, whose ReadMe
+  (1993-01-01) releases the distribution as Public Domain. The ProTracker 2.3D
+  help file says the same: "(C) 1992 Mushroom Studios. This program is Public
+  Domain". It is assembled here unmodified.
+* **The modules** in `assets/mods/` are the 8bitboy collection. None of them
+  carries a license, so they never ship in the WebCLAP plugin and never go
+  to opendaw-commons. Only the web player in this repo uses them.
+* **The example modules** in `wclap/mods/` belong to their authors.
+  `stranger_-_run.mod` is a cover of an NES tune.
+
+Sources: [ProTracker 2.3 ReadMe and docs](https://m64.io/chiptune-wiki/wiki/s-protracker-23-readme-and-docs),
+[ProTracker 2.3D help file](https://github.com/echolevel/Protracker-2.3D-Helpfile-Manual).
