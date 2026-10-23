@@ -96,8 +96,14 @@ typedef uint32 uint64;
 #define S64(val) val
 #endif
 
-#include "softfloat/milieu.h"
-#include "softfloat/softfloat.h"
+/* SoftFloat, the 68881/68040 FPU and the PMMU are left out (a 68000 has none of them): the FPU registers only need a
+ * place in the CPU state, the small types SoftFloat brought come from here */
+typedef sint8 flag;
+typedef sint8 int8;
+typedef sint16 int16;
+typedef sint32 int32;
+typedef sint64 int64;
+typedef struct { uint16 high; uint64 low; } floatx80;
 
 
 /* Allow for architectures that don't have 8-bit sizes */

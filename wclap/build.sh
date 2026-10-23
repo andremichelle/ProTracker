@@ -6,7 +6,7 @@ set -euo pipefail
 cd "$(dirname "$0")"
 OUT="${OUT:-out}"
 # the examples the page offers, the first one is compiled in as the module a new plugin plays
-EXAMPLES="8bit_castle.mod jam_-_highway_encounter.mod jam_-_heatwave_cruise.mod kc-dancinonamiga.mod stranger_-_run.mod"
+EXAMPLES="8bit_castle.mod jam_-_highway_encounter.mod jam_-_heatwave_cruise.mod kc-dancinonamiga.mod"
 mkdir -p "$OUT" gen
 {
   echo "#include <stdint.h>"
@@ -14,7 +14,7 @@ mkdir -p "$OUT" gen
   cp "mods/${EXAMPLES%% *}" gen/default_mod
   (cd gen && xxd -i -n default_mod default_mod)
 } | sed 's/unsigned char/static const uint8_t/; s/unsigned int/static const uint32_t/' > gen/assets.h
-SRC="protracker.c ../emu/ust.c ../emu/musashi/m68kcpu.c ../emu/musashi/m68kops.c ../emu/musashi/softfloat/softfloat.c"
+SRC="protracker.c ../emu/ust.c ../emu/musashi/m68kcpu.c ../emu/musashi/m68kops.c"
 emcc $SRC -O3 -DM68K_NO_SETJMP -I../emu/musashi -Igen -I"$CLAP_INCLUDE" -o "$OUT/module.wasm" \
     -sSTANDALONE_WASM=1 --no-entry \
     -sEXPORTED_FUNCTIONS=_malloc,_free -Wl,--export=clap_entry \

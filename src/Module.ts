@@ -7,6 +7,55 @@ export interface Cell {
     readonly arg: int
 }
 
+/** One of the 31 sample slots. Lengths and loop points are in bytes, always even (the module stores words). */
+export interface Sample {
+    readonly name: string
+    readonly length: int
+    readonly finetune: int      // -8..7
+    readonly volume: int        // 0..64
+    readonly loopStart: int
+    readonly loopLength: int    // 2 or less: no loop
+    readonly data: Int8Array    // the bytes the file holds, shorter than `length` if it was cut off
+}
+
+export type SampleHeader = Omit<Sample, "data">
+
+export const MAX_SAMPLE_BYTES = 0xFFFF * 2
+
+/** The 30 bytes a sample header takes in the module. */
+export const encodeSampleHeader = ({name, length, finetune, volume, loopStart, loopLength}: SampleHeader): Uint8Array => {
+    const bytes = new Uint8Array(30)
+    for (let index = 0; index < Math.min(22, name.length); index++) {bytes[index] = name.charCodeAt(index) & 0xff}
+    const words = (value: int, at: int) => {
+        const word = Math.max(0, Math.min(0xFFFF, value >> 1))
+        bytes[at] = word >> 8
+        bytes[at + 1] = word & 0xff
+    }
+    words(length, 22)
+    bytes[24] = finetune & 0x0f
+    bytes[25] = Math.max(0, Math.min(64, volume))
+    words(loopStart, 26)
+    words(Math.max(2, loopLength), 28)
+    return bytes
+}
+
+const decodeSamples = (d: Uint8Array, numPatterns: int): ReadonlyArray<Sample> => {
+    let at = 1084 + numPatterns * 1024
+    return Array.from({length: 31}, (_, index) => {
+        const h = 20 + 30 * index
+        const word = (offset: int) => ((d[h + offset] << 8) | d[h + offset + 1]) * 2
+        const length = word(22)
+        const start = Math.min(at, d.length)
+        const data = new Int8Array(d.buffer, d.byteOffset + start, Math.min(length, d.length - start))
+        at += length
+        return {
+            name: String.fromCharCode(...d.subarray(h, h + 22)).replace(/\0.*$/, "").trimEnd(),
+            length, finetune: ((d[h + 24] & 0x0f) ^ 8) - 8, volume: Math.min(64, d[h + 25]),
+            loopStart: word(26), loopLength: word(28), data
+        }
+    })
+}
+
 export type Row = ReadonlyArray<Cell>       // 4 channels
 export type Pattern = ReadonlyArray<Row>    // 64 rows
 
@@ -99,7 +148,7 @@ export class Module {
             }
             patterns.push(rows)
         }
-        return new Module(d, title, positions, patterns)
+        return new Module(d, title, positions, patterns, decodeSamples(d, numPatterns))
     }
 
     static pad15to31(d: Uint8Array): Uint8Array {
@@ -127,5 +176,6 @@ export class Module {
     private constructor(readonly data: Uint8Array,
                         readonly title: string,
                         readonly positions: ReadonlyArray<int>,
-                        readonly patterns: ReadonlyArray<Pattern>) {}
+                        readonly patterns: ReadonlyArray<Pattern>,
+                        readonly samples: ReadonlyArray<Sample>) {}
 }

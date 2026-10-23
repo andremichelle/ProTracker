@@ -1,8 +1,8 @@
 import {Arrays, DefaultObservableValue, MutableObservableOption, Nullable, Terminable, Terminator, tryCatch} from "@opendaw/lib-std"
 import {AnimationFrame, Events} from "@opendaw/lib-dom"
-import {Cell, encodeCell, Module} from "@/Module"
+import {Cell, encodeCell, encodeSampleHeader, Module, SampleHeader} from "@/Module"
 import {Replayer} from "@/Replayer"
-import type {Status} from "@/worklet/processor"
+import type {Status} from "@/Status"
 
 // the plugin's param ids (wclap/protracker.c)
 export namespace PluginParams {
@@ -19,7 +19,7 @@ export namespace PluginParams {
 
 // message types, see webview_receive in wclap/protracker.c
 const PAGE_POLL = 1, PAGE_MODULE_REQUEST = 2, PAGE_LOAD = 3, PAGE_PARAM_BEGIN = 4, PAGE_PARAM_SET = 5, PAGE_PARAM_END = 6,
-    PAGE_SET_PATTERN = 7, PAGE_INSERT_PATTERN = 8, PAGE_SET_CELL = 9
+    PAGE_SET_PATTERN = 7, PAGE_INSERT_PATTERN = 8, PAGE_SET_CELL = 9, PAGE_SET_SAMPLE_HEADER = 10, PAGE_SET_SAMPLE = 11
 const PLUGIN_STATUS = 1, PLUGIN_MODULE = 2
 
 /** The page's end of the plugin: polls the replayer every frame, fetches the module when it changed, sends edits. */
@@ -71,6 +71,23 @@ export class PluginLink implements Replayer, Terminable {
         const message = new Uint8Array(8)
         message.set([PAGE_SET_CELL, pattern, row, channel])
         message.set(encodeCell(cell), 4)
+        this.#post(message)
+    }
+
+    /** Name, finetune, volume and loop of a sample slot (0..30), its length stays. */
+    setSampleHeader(slot: number, header: SampleHeader): void {
+        const message = new Uint8Array(34)
+        message.set([PAGE_SET_SAMPLE_HEADER, slot])
+        message.set(encodeSampleHeader(header), 4)
+        this.#post(message)
+    }
+
+    /** New data for a sample slot (0..30) with its header, empty clears the slot. */
+    setSample(slot: number, header: SampleHeader, data: Int8Array): void {
+        const message = new Uint8Array(34 + data.length)
+        message.set([PAGE_SET_SAMPLE, slot])
+        message.set(encodeSampleHeader({...header, length: data.length}), 4)
+        message.set(new Uint8Array(data.buffer, data.byteOffset, data.length), 34)
         this.#post(message)
     }
 

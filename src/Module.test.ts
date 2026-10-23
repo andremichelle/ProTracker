@@ -1,5 +1,5 @@
 import {describe, expect, it} from "vitest"
-import {encodeCell, Module, noteName, periodOf} from "@/Module"
+import {encodeCell, encodeSampleHeader, Module, noteName, periodOf} from "@/Module"
 
 const setTag = (d: Uint8Array, tag: string): void => {
     for (let i = 0; i < 4; i++) {d[1080 + i] = tag.charCodeAt(i)}
@@ -197,5 +197,53 @@ describe("encodeCell", () => {
         data.set(encodeCell(cell), 1084 + 5 * 16 + 2 * 4)
         expect(Module.parse(data).patterns[0][5][2]).toStrictEqual(cell)
         expect(Array.from(encodeCell(cell))).toStrictEqual([0x11, 0xAC, 0x3C, 0x20])
+    })
+})
+
+describe("samples", () => {
+    // one pattern, sample 1 with 6 bytes and a loop over the last 4, sample 3 with 4 bytes, the rest empty
+    const example = (): Uint8Array => {
+        const data = buildMinimalProTracker("samples", 1, new Uint8Array(0))
+        const module = new Uint8Array(data.length + 10)
+        module.set(data)
+        module.set(encodeSampleHeader({name: "one", length: 6, finetune: 2, volume: 40, loopStart: 2, loopLength: 4}), 20)
+        module.set(encodeSampleHeader({name: "three", length: 4, finetune: -8, volume: 64, loopStart: 0, loopLength: 2}), 80)
+        module.set([1, 2, 3, 4, 5, 6, -1 & 0xff, -2 & 0xff, -3 & 0xff, -4 & 0xff], data.length)
+        return module
+    }
+
+    it("reads all 31 slots, their data ends where the file ends", () => {
+        const data = example()
+        const {samples} = Module.parse(data)
+        expect(samples).toHaveLength(31)
+        expect(samples[0]).toMatchObject({name: "one", length: 6, finetune: 2, volume: 40, loopStart: 2, loopLength: 4})
+        expect(Array.from(samples[0].data)).toStrictEqual([1, 2, 3, 4, 5, 6])
+        expect(samples[1].length).toBe(0)
+        expect(samples[2]).toMatchObject({name: "three", length: 4, finetune: -8})
+        expect(Array.from(samples[2].data)).toStrictEqual([-1, -2, -3, -4])
+        expect(samples[2].data.byteOffset + samples[2].data.length).toBe(data.length)
+    })
+
+    it("encodes a header back to the bytes it was read from", () => {
+        const data = example()
+        Module.parse(data).samples.forEach((sample, index) => {
+            const header = data.subarray(20 + 30 * index, 20 + 30 * index + 30)
+            expect(Array.from(encodeSampleHeader(sample))).toStrictEqual(Array.from(header).map((byte, at) =>
+                at === 29 && sample.length === 0 && byte === 0 ? 1 : byte))
+        })
+    })
+
+    it("reads finetune as -8..7 and writes it back as a nibble", () => {
+        const data = buildMinimalProTracker("ft", 1)
+        data.set(encodeSampleHeader({name: "x", length: 4, finetune: -1, volume: 64, loopStart: 0, loopLength: 2}), 20)
+        expect(data[20 + 24]).toBe(15)
+        expect(Module.parse(data).samples[0].finetune).toBe(-1)
+    })
+
+    it("cuts names to 22 characters and keeps a missing loop at one word", () => {
+        const header = encodeSampleHeader({name: "a".repeat(30), length: 100, finetune: 0, volume: 70, loopStart: 0, loopLength: 0})
+        expect(header.subarray(0, 22).every(byte => byte === 97)).toBe(true)
+        expect(header[25]).toBe(64)
+        expect((header[28] << 8) | header[29]).toBe(1)
     })
 })

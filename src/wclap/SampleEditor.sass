@@ -1,0 +1,110 @@
+component
+  display: grid
+  grid-template-columns: minmax(12em, 16em) 1fr
+  gap: 0.5rem
+  min-width: 0
+  min-height: 0
+  font-size: clamp(0.625rem, 1.6cqw, 1.375rem)
+
+  .list
+    min-height: 0
+    overflow-y: auto
+    scrollbar-width: none
+    background-color: var(--color-panel-background)
+    border: 1px solid var(--color-panel-background-bright)
+    border-radius: 4px
+
+  .slot
+    display: grid
+    grid-template-columns: 2em 1fr auto
+    gap: 0.5em
+    padding: 0 0.75em
+    height: 1.5em
+    line-height: 1.5em
+    color: var(--color-gray)
+    white-space: pre
+    cursor: pointer
+
+    &:hover
+      color: var(--color-bright)
+
+    &.empty
+      color: var(--color-shadow)
+
+    &.selected
+      color: var(--color-black)
+      background-color: var(--color-green)
+
+    .number, .length
+      color: inherit
+      opacity: 0.7
+
+    .title
+      overflow: hidden
+      text-overflow: ellipsis
+
+  .detail
+    display: grid
+    grid-template-rows: auto minmax(0, 1fr) auto auto
+    gap: 0.5rem
+    min-width: 0
+    min-height: 0
+    padding: 0.5rem
+    background-color: var(--color-panel-background)
+    border: 1px solid var(--color-panel-background-bright)
+    border-radius: 4px
+
+  .fields, .actions
+    display: flex
+    flex-wrap: wrap
+    align-items: center
+    gap: 0.75em
+
+  label
+    display: flex
+    align-items: center
+    gap: 0.3em
+    color: var(--color-dark)
+    white-space: nowrap
+
+  input, select
+    font: inherit
+    color: var(--color-cream)
+    background-color: var(--color-black)
+    border: 1px solid var(--color-shadow)
+    border-radius: 3px
+    padding: 0.2em 0.4em
+    outline: none
+
+    &:focus
+      border-color: var(--color-green)
+
+    &.invalid
+      border-color: var(--color-red)
+
+  input.name
+    width: 14em
+
+  input.number
+    width: 4.5em
+
+  .wave
+    min-height: 4rem
+    background-color: var(--color-black)
+    border-radius: 3px
+
+    canvas
+      display: block
+      width: 100%
+      height: 100%
+      --wave: var(--color-green)
+      --loop: rgba(255, 255, 255, 0.08)
+      --marker: var(--color-cream)
+
+  .info
+    color: var(--color-dark)
+    margin-right: auto
+
+  .hint
+    font-size: 0.75em
+    color: var(--color-dark)

@@ -1,6 +1,7 @@
 import {DefaultObservableValue, isDefined, MutableObservableOption, Nullable, Option, tryCatch} from "@opendaw/lib-std"
 import {Module} from "@/Module"
-import type {Request, Response, Status} from "@/worklet/processor"
+import type {Request, Response} from "@/worklet/processor"
+import type {Status} from "@/Status"
 import processorUrl from "@/worklet/processor?worker&url"
 
 /** Owns the AudioContext, the worklet running the emulator, and the current module. */

@@ -65,7 +65,7 @@ extern int ust_paula_rebuild(uint32_t count, double paula_clocks_per_beat, doubl
 // page -> plugin
 enum {
     PAGE_POLL = 1, PAGE_MODULE_REQUEST = 2, PAGE_LOAD = 3, PAGE_PARAM_BEGIN = 4, PAGE_PARAM_SET = 5, PAGE_PARAM_END = 6,
-    PAGE_SET_PATTERN = 7, PAGE_INSERT_PATTERN = 8, PAGE_SET_CELL = 9
+    PAGE_SET_PATTERN = 7, PAGE_INSERT_PATTERN = 8, PAGE_SET_CELL = 9, PAGE_SET_SAMPLE_HEADER = 10, PAGE_SET_SAMPLE = 11
 };
 // plugin -> page
 enum {PLUGIN_STATUS = 1, PLUGIN_MODULE = 2};
@@ -97,10 +97,10 @@ void emscripten_notify_memory_growth(size_t index) {(void) index;}
 typedef struct {uint16_t type; clap_id id; double value;} OutEvent;
 
 // what an edit changes in the song, so the pass is cut where the routine first reads it
-enum {CUT_POSITION, CUT_POSITIONS_FROM, CUT_PATTERN};
+enum {CUT_POSITION, CUT_POSITIONS_FROM, CUT_PATTERNS};
 
 // an edit for the machine: bytes at an offset of the module and where the song changed
-typedef struct {uint32_t offset, length; uint8_t bytes[TABLE_BYTES]; int cut, value;} MachineEdit;
+typedef struct {uint32_t offset, length; uint8_t bytes[TABLE_BYTES]; int cut, value; uint8_t patterns[16];} MachineEdit;
 
 // what the page shows, taken at the end of every block
 typedef struct {uint8_t playing, pos, pattern, row, speed, song_len; uint16_t period[4]; uint8_t volume[4], dma[4]; float peak[4];} Display;
@@ -134,6 +134,7 @@ typedef struct {
     uint8_t *pending_module; // a module from the page, swapped in at the next block start
     uint32_t pending_len;
     volatile int pending_ready;
+    volatile int reload_pending; // the module changed where the routine cannot follow (sample data), it starts anew
     MachineEdit machine_edits[MACHINE_EDITS];
     volatile uint32_t edit_write, edit_read;
     OutEvent out_events[OUT_EVENTS];
@@ -332,19 +333,22 @@ static int build_snapshots(Tracker *tracker) {
     return 1;
 }
 
-static int reaches(const Tracker *tracker, uint8_t position, int kind, int value) {
-    switch (kind) {
-        case CUT_POSITION: return position == value;
-        case CUT_POSITIONS_FROM: return position >= value;
-        default: return tracker->module[952 + (position & 0x7f)] == value;
+static int reaches(const Tracker *tracker, uint8_t position, const MachineEdit *edit) {
+    switch (edit->cut) {
+        case CUT_POSITION: return position == edit->value;
+        case CUT_POSITIONS_FROM: return position >= edit->value;
+        default: {
+            const uint8_t pattern = tracker->module[952 + (position & 0x7f)];
+            return (edit->patterns[pattern >> 3] >> (pattern & 7)) & 1;
+        }
     }
 }
 
 // After an edit the pass stays valid up to the beat in which the routine first reaches what changed (a position, any
-// position from one on, or a pattern). A beat playing past that point keeps its measure.
-static void cut_pass(Tracker *tracker, int kind, int value) {
+// position from one on, or one of some patterns). A beat playing past that point keeps its measure.
+static void cut_pass(Tracker *tracker, const MachineEdit *edit) {
     uint32_t tick = 0;
-    while (tick < tracker->tick_count && !reaches(tracker, tracker->tick_pos[tick], kind, value)) {tick++;}
+    while (tick < tracker->tick_count && !reaches(tracker, tracker->tick_pos[tick], edit)) {tick++;}
     if (tick == tracker->tick_count) {return;}
     const double *times = tracker->times;
     uint32_t cut = tick;
@@ -541,9 +545,107 @@ static bool edit_cell(Tracker *tracker, int pattern, int row, int channel, const
     edit->offset = offset;
     edit->length = 4;
     memcpy(edit->bytes, cell, 4);
-    edit->cut = CUT_PATTERN;
-    edit->value = pattern;
+    edit->cut = CUT_PATTERNS;
+    memset(edit->patterns, 0, sizeof(edit->patterns));
+    edit->patterns[pattern >> 3] = (uint8_t) (1 << (pattern & 7));
     tracker->edit_write++;
+    tracker->module_serial++;
+    if (tracker->host_state != NULL) {tracker->host_state->mark_dirty(tracker->host);}
+    return true;
+}
+
+static uint32_t word_at(const uint8_t *bytes) {return ((uint32_t) bytes[0] << 8) | bytes[1];}
+
+static void put_word(uint8_t *bytes, uint32_t value) {
+    bytes[0] = (uint8_t) (value >> 8);
+    bytes[1] = (uint8_t) value;
+}
+
+// a loop that fits the sample, as ProTracker's loader makes it, so the machine holds what a fresh load would
+static void sanitize_header(uint8_t *header) {
+    const uint32_t length = word_at(header + 22);
+    uint32_t start = word_at(header + 26), repeat = word_at(header + 28);
+    if (length != 0 && start >= length) {start = 0; repeat = 1;}
+    if (length != 0 && start + repeat > length) {repeat = length - start;}
+    if (repeat == 0) {repeat = 1;}
+    put_word(header + 26, start);
+    put_word(header + 28, repeat);
+}
+
+// A sample's name, finetune, volume and loop from the page, its length stays. The routine reads them with every note.
+static bool edit_sample_header(Tracker *tracker, int slot, const uint8_t *bytes) {
+    if (tracker->edit_write - tracker->edit_read >= MACHINE_EDITS || slot < 0 || slot >= 31) {return false;}
+    uint8_t *header = tracker->module + 20 + 30 * slot;
+    uint8_t edited[30];
+    memcpy(edited, bytes, 30);
+    memcpy(edited + 22, header + 22, 2);
+    const uint32_t length = word_at(edited + 22);
+    if (edited[25] > 64 || (length > 0 && word_at(edited + 26) + word_at(edited + 28) > length)) {return false;}
+    if (memcmp(header, edited, 30) == 0) {return true;}
+    memcpy(header, edited, 30);
+    MachineEdit *edit = &tracker->machine_edits[tracker->edit_write % MACHINE_EDITS];
+    edit->offset = 20 + 30 * (uint32_t) slot;
+    edit->length = 30;
+    memcpy(edit->bytes, edited, 30);
+    sanitize_header(edit->bytes);
+    edit->cut = CUT_PATTERNS;
+    memset(edit->patterns, 0, sizeof(edit->patterns));
+    const int count = pattern_count(tracker->module + 952);
+    for (int pattern = 0; pattern < count; pattern++) {
+        for (uint32_t step = 0; step < 256; step++) {
+            const uint32_t at = 1084u + (uint32_t) pattern * 1024u + step * 4u;
+            if (at + 4 > tracker->module_len) {break;}
+            const uint8_t *cell = tracker->module + at;
+            if (((cell[0] & 0xf0) | (cell[2] >> 4)) == slot + 1) {
+                edit->patterns[pattern >> 3] |= (uint8_t) (1 << (pattern & 7));
+                break;
+            }
+        }
+    }
+    tracker->edit_write++;
+    tracker->module_serial++;
+    if (tracker->host_state != NULL) {tracker->host_state->mark_dirty(tracker->host);}
+    return true;
+}
+
+// A sample's data from the page (empty clears the slot) with its header: the samples behind it move, so the routine
+// starts anew with the module at the next block.
+static bool edit_sample(Tracker *tracker, int slot, const uint8_t *header, const uint8_t *data, uint32_t size) {
+    if (slot < 0 || slot >= 31 || (size & 1) != 0 || size > 0xFFFFu * 2u) {return false;}
+    const uint8_t *file = tracker->module;
+    const uint32_t count = (uint32_t) pattern_count(file + 952);
+    const uint32_t samples_at = 1084u + count * 1024u;
+    uint32_t starts[32];
+    uint32_t at = samples_at;
+    for (int index = 0; index < 31; index++) {
+        starts[index] = at < tracker->module_len ? at : tracker->module_len;
+        at += word_at(file + 20 + 30 * index + 22) * 2u;
+    }
+    starts[31] = at < tracker->module_len ? at : tracker->module_len;
+    const uint32_t before = starts[slot] - (samples_at < tracker->module_len ? samples_at : tracker->module_len);
+    const uint32_t after = starts[31] - starts[slot + 1];
+    const uint32_t len = samples_at + before + size + after;
+    const uint32_t slots = (uint32_t) pattern_slots(file);
+    if (len + (slots > count ? slots - count : 0) * 1024u > MODULE_MAX_BYTES) {return false;}
+    uint8_t *edited = (uint8_t *) calloc(len, 1);
+    if (edited == NULL) {return false;}
+    memcpy(edited, file, samples_at < tracker->module_len ? samples_at : tracker->module_len);
+    memcpy(edited + samples_at, file + starts[0], before);
+    memcpy(edited + samples_at + before, data, size);
+    memcpy(edited + samples_at + before + size, file + starts[slot + 1], after);
+    for (int index = 0; index < 31; index++) {
+        if (index != slot && starts[index + 1] - starts[index] < word_at(file + 20 + 30 * index + 22) * 2u) {
+            put_word(edited + 20 + 30 * index + 22, (starts[index + 1] - starts[index]) / 2u);
+        }
+    }
+    uint8_t *target = edited + 20 + 30 * slot;
+    memcpy(target, header, 30);
+    put_word(target + 22, size / 2u);
+    sanitize_header(target);
+    free(tracker->module);
+    tracker->module = edited;
+    tracker->module_len = len;
+    tracker->reload_pending = 1;
     tracker->module_serial++;
     if (tracker->host_state != NULL) {tracker->host_state->mark_dirty(tracker->host);}
     return true;
@@ -630,11 +732,15 @@ static clap_process_status tracker_process(const clap_plugin_t *plugin, const cl
         tracker->pending_ready = 0;
         if (tracker->ready) {swap_module(tracker, module, module_len);} else {free(module);}
     }
+    if (tracker->reload_pending) {
+        tracker->reload_pending = 0;
+        if (tracker->ready) {tracker->ready = start_module(tracker);}
+    }
     while (tracker->edit_read != tracker->edit_write) {
         const MachineEdit *edit = &tracker->machine_edits[tracker->edit_read % MACHINE_EDITS];
         if (tracker->ready) {
             for (uint32_t index = 0; index < edit->length; index++) {ust_module_poke(edit->offset + index, edit->bytes[index]);}
-            cut_pass(tracker, edit->cut, edit->value);
+            cut_pass(tracker, edit);
         }
         tracker->edit_read++;
     }
@@ -919,6 +1025,10 @@ static bool webview_receive(const clap_plugin_t *plugin, const void *buffer, uin
             return size >= 2 && edit_table(tracker, bytes[1], -1);
         case PAGE_SET_CELL:
             return size >= 8 && edit_cell(tracker, bytes[1], bytes[2], bytes[3], bytes + 4);
+        case PAGE_SET_SAMPLE_HEADER:
+            return size >= 34 && edit_sample_header(tracker, bytes[1], bytes + 4);
+        case PAGE_SET_SAMPLE:
+            return size >= 34 && edit_sample(tracker, bytes[1], bytes + 4, bytes + 34, size - 34);
         case PAGE_PARAM_BEGIN:
             page_param(tracker, CLAP_EVENT_PARAM_GESTURE_BEGIN, bytes, size);
             return true;

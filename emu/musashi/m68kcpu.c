@@ -48,8 +48,10 @@ extern void m68ki_build_opcode_table(void);
 #include "m68kops.h"
 #include "m68kcpu.h"
 
-#include "m68kfpu.c"
-#include "m68kmmu.h" // uses some functions from m68kfpu.c which are static !
+/* no FPU and no PMMU (m68kfpu.c, m68kmmu.h and SoftFloat are left out), their opcodes take the F-line exception */
+void m68040_fpu_op0(void) { m68ki_exception_1111(); }
+void m68040_fpu_op1(void) { m68ki_exception_1111(); }
+void m68881_mmu_ops(void) { m68ki_exception_1111(); }
 
 /* ======================================================================== */
 /* ================================= DATA ================================= */

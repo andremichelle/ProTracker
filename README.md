@@ -55,8 +55,8 @@ assets/       ptplay (routine + glue), ust.wasm (built),
               served as Vite's public dir
 emu/ust.c     the emulator and its C API
 emu/pt/       PT-CIAPlay.s (original), ptglue.s
-emu/musashi/  Musashi 68000 core (Karl Stenerud, MIT), configured as a plain 68000;
-              the FPU/softfloat files stay only because m68kcpu.c includes them
+emu/musashi/  Musashi 68000 core (Karl Stenerud, MIT), configured as a plain 68000,
+              without its FPU, PMMU and SoftFloat (their opcodes take the F-line exception)
 emu/native/   command line harness that renders a module to WAV
 emu/build.sh  builds assets/ust.wasm (emcc) and emu/native/ust-native (cc)
 src/          the web app: openDAW SDK (lib-jsx, lib-dom, lib-std), TypeScript, Vite
@@ -165,8 +165,7 @@ Long-term, not currently planned:
 * **The modules** in `assets/mods/` are the 8bitboy collection. None of them
   carries a license, so they never ship in the WebCLAP plugin and never go
   to opendaw-commons. Only the web player in this repo uses them.
-* **The example modules** in `wclap/mods/` belong to their authors.
-  `stranger_-_run.mod` is a cover of an NES tune.
+* **The example modules** in `wclap/mods/` are CC0, free to use for anything.
 
 Sources: [ProTracker 2.3 ReadMe and docs](https://m64.io/chiptune-wiki/wiki/s-protracker-23-readme-and-docs),
 [ProTracker 2.3D help file](https://github.com/echolevel/Protracker-2.3D-Helpfile-Manual).

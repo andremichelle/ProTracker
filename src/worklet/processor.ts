@@ -1,4 +1,5 @@
 /* AudioWorklet processor hosting the emulator (ust.wasm). Bundled by Vite via "?worker&url". */
+import type {Status} from "@/Status"
 
 declare const sampleRate: number
 declare class AudioWorkletProcessor {
@@ -40,16 +41,6 @@ export type Request =
     | {type: "play"} | {type: "stop"}
     | {type: "filter", value: boolean} | {type: "led", value: boolean} | {type: "declick", value: boolean}
 
-export interface Status {
-    readonly pos: number
-    readonly pattern: number
-    readonly row: number
-    readonly speed: number
-    readonly tempo: number
-    readonly tickHz: number
-    // level: the channel's peak since the last status (0..1), only where the host measures it
-    readonly channels: ReadonlyArray<{period: number, volume: number, dma: boolean, level?: number}>
-}
 
 export type Response =
     | {type: "loaded"}

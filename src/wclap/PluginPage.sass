@@ -35,8 +35,13 @@ component
         color: var(--color-dark)
         cursor: default
 
+      &.tab.active
+        color: var(--color-black)
+        background-color: var(--color-cream)
+
     .examples
       position: relative
+      margin-left: 0.75rem
 
     .menu
       position: absolute
@@ -72,3 +77,11 @@ component
     grid-template-columns: auto 1fr
     gap: 0.5rem
     min-height: 0
+
+    > .view
+      display: grid
+      min-width: 0
+      min-height: 0
+
+      &[hidden]
+        display: none

@@ -235,6 +235,41 @@ static int cell_break(Plugin *p) {return set_cell(p, 1, 8, 2, 0, 0, 0xD, 0);}
 static int cell_jump(Plugin *p) {return set_cell(p, 1, 12, 3, 0, 0, 0xB, 5);}
 static int cell_late_row(Plugin *p) {return set_cell(p, 1, 48, 0, 0, 0, 0xF, 4);}
 
+static void header_of(uint8_t *header, const char *name, int length, int finetune, int volume, int start, int repeat) {
+    memset(header, 0, 30);
+    strncpy((char *) header, name, 22);
+    header[22] = (uint8_t) ((length / 2) >> 8); header[23] = (uint8_t) (length / 2);
+    header[24] = (uint8_t) (finetune & 15);
+    header[25] = (uint8_t) volume;
+    header[26] = (uint8_t) ((start / 2) >> 8); header[27] = (uint8_t) (start / 2);
+    header[28] = (uint8_t) ((repeat / 2) >> 8); header[29] = (uint8_t) (repeat / 2);
+}
+
+static int set_sample_header(Plugin *p, int slot, int finetune, int volume, int start, int repeat) {
+    uint8_t message[34] = {10, (uint8_t) slot};
+    header_of(message + 4, "edited", 0, finetune, volume, start, repeat);
+    return p->webview->receive(p->plugin, message, sizeof(message));
+}
+
+static int set_sample(Plugin *p, int slot, int length, int start, int repeat) {
+    uint8_t *message = calloc(34 + (size_t) length, 1);
+    message[0] = 11;
+    message[1] = (uint8_t) slot;
+    header_of(message + 4, "sine", length, 0, 48, start, repeat);
+    for (int index = 0; index < length; index++) {message[34 + index] = (uint8_t) (int8_t) lrint(100.0 * sin(index * 0.1));}
+    const int taken = p->webview->receive(p->plugin, message, 34 + (uint32_t) length);
+    free(message);
+    return taken;
+}
+
+// sample 12 plays in patterns 3, 5 and 6 (first at beat 96), sample 9 in pattern 2 (beat 64), sample 5 everywhere
+static int header_late(Plugin *p) {return set_sample_header(p, 11, -3, 60, 200, 1000);}
+static int header_pattern_2(Plugin *p) {return set_sample_header(p, 8, 2, 20, 100, 2000);}
+static int header_playing(Plugin *p) {return set_sample_header(p, 4, 0, 30, 0, 2);}
+static int sample_replace(Plugin *p) {return set_sample(p, 1, 4000, 1000, 3000);}
+static int sample_clear(Plugin *p) {return set_sample(p, 11, 0, 0, 2);}
+static int sample_grow(Plugin *p) {return set_sample(p, 4, 20000, 0, 2);}
+
 static int edit_none(Plugin *p) {return set_pattern(p, 1, 0);}
 static int edit_set(Plugin *p) {return set_pattern(p, 1, 4);}
 static int edit_set_new(Plugin *p) {return set_pattern(p, 3, 9);}
@@ -278,6 +313,13 @@ int main(int argc, char **argv) {
     compare("step in a later row of the playing pattern", module, len, cell_late_row, 34.0, -1.0, 32.0);
     compare("step after playing past it, jump back", module, len, cell_speed, 50.0, 30.0, 24.0);
 
+    compare("sample header while playing, before it plays", module, len, header_late, 2.0, -1.0, 110.0);
+    compare("sample header, jump past it", module, len, header_pattern_2, 2.0, 66.0, 16.0);
+    compare("header of a sample that plays now, jump", module, len, header_playing, 2.0, 40.0, 16.0);
+    compare("sample replaced, jump", module, len, sample_replace, 2.0, 66.0, 16.0);
+    compare("sample cleared, jump", module, len, sample_clear, 2.0, 100.0, 16.0);
+    compare("sample grown, every sample behind it moves, jump", module, len, sample_grow, 2.0, 20.0, 16.0);
+
     Plugin p = open_plugin(module, len);
     expect(set_pattern(&p, 3, 9), "a new pattern past the last one");
     process(&p, 0, NULL, NULL);
@@ -301,6 +343,19 @@ int main(int argc, char **argv) {
     const uint8_t *step = edited + 1084 + 5 * 16 + 2 * 4;
     expect(step[0] == 0x11 && step[1] == 0xAC && step[2] == 0x3C && step[3] == 0x20, "the step lands in the module as stored");
     free(edited);
+    close_plugin(&p);
+
+    p = open_plugin(module, len);
+    expect(!set_sample_header(&p, 31, 0, 64, 0, 2), "slot 32 is refused");
+    expect(!set_sample_header(&p, 4, 0, 65, 0, 2), "a volume past 64 is refused");
+    expect(!set_sample_header(&p, 4, 0, 64, 3000, 2000), "a loop past the sample is refused");
+    expect(set_sample(&p, 1, 4000, 1000, 3000), "a new sample");
+    edited = fetch_module(&p, &edited_len);
+    expect(edited_len == len - 7764 + 4000, "the module holds the new length");
+    expect(((edited[20 + 30 + 22] << 8) | edited[20 + 30 + 23]) * 2 == 4000, "the header has the new length");
+    expect(memcmp(edited + edited_len - 6308, module + len - 6308, 6308) == 0, "the samples behind it are kept");
+    free(edited);
+    expect(!set_sample(&p, 1, 3, 0, 2), "an odd length is refused");
     close_plugin(&p);
 
     printf(failures == 0 ? "all passed\n" : "%d failed\n", failures);

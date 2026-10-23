@@ -7,6 +7,7 @@ import {Positions} from "@/ui/Positions"
 import {Channels} from "@/ui/Channels"
 import {Mixer} from "@/wclap/Mixer"
 import {PluginLink} from "@/wclap/PluginLink"
+import {SampleEditor} from "@/wclap/SampleEditor"
 
 const className = Html.adoptStyleSheet(css, "PluginPage")
 
@@ -60,26 +61,47 @@ export const PluginPage = ({lifecycle, link}: Construct) => {
         link.module.catchupAndSubscribe(option => title.value = option.mapOr(module => module.title || "(untitled)", "")),
         link.error.catchupAndSubscribe(owner => error.value = owner.getValue()),
         link.playing.catchupAndSubscribe(owner => playing.value = owner.getValue() ? "playing" : "stopped"))
+    const patternView: HTMLDivElement = <div className="view"><PatternView lifecycle={lifecycle} player={link} edit={link}/></div>
+    const sampleView: HTMLDivElement = <div className="view"><SampleEditor lifecycle={lifecycle} link={link}/></div>
+    const patternTab: HTMLButtonElement = <button type="button" className="tab">Pattern</button>
+    const sampleTab: HTMLButtonElement = <button type="button" className="tab">Samples</button>
+    const show = (samples: boolean): void => {
+        patternView.hidden = samples
+        sampleView.hidden = !samples
+        patternTab.classList.toggle("active", !samples)
+        sampleTab.classList.toggle("active", samples)
+    }
+    patternTab.onclick = () => show(false)
+    sampleTab.onclick = () => show(true)
+    patternTab.tabIndex = -1
+    sampleTab.tabIndex = -1
+    show(false)
     const element: HTMLElement = (
         <div className={className}>
             <header>
                 <span className="title">{title}</span>
                 <span className="state">{playing}</span>
                 <span className="error">{error}</span>
+                {patternTab}
+                {sampleTab}
                 <div className="examples">{examples}{menu}</div>
                 {loadButton}
                 {fileInput}
             </header>
             <main>
                 <Positions lifecycle={lifecycle} player={link} edit={link}/>
-                <PatternView lifecycle={lifecycle} player={link} edit={link}/>
+                {patternView}
+                {sampleView}
             </main>
             <div className="channels"><Channels lifecycle={lifecycle} player={link}/></div>
             <Mixer lifecycle={lifecycle} link={link}/>
         </div>
     )
     lifecycle.ownAll(
-        Events.subscribe(element, "mousedown", event => event.preventDefault()),
+        Events.subscribe(element, "mousedown", event => {
+            if (event.target instanceof Element && isDefined(event.target.closest("[data-keep-focus]"))) {return}
+            event.preventDefault()
+        }),
         Events.subscribe(document, "pointerdown", event => {
             const target = event.target
             if (!menu.hidden && target instanceof Node && !examples.contains(target) && !menu.contains(target)) {menu.hidden = true}
